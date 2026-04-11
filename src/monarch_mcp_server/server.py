@@ -1727,6 +1727,13 @@ def _configure_remote_auth():
     from pydantic import AnyHttpUrl
 
     from monarch_mcp_server.oauth import MonarchOAuthProvider
+    from monarch_mcp_server.security import (
+        admin_rate_limiter,
+        auth_rate_limiter,
+        get_client_ip,
+        log_auth_event,
+        rate_limit,
+    )
 
     server_url = os.environ.get("MCP_SERVER_URL", "")
     if not server_url:
@@ -1878,11 +1885,13 @@ def _configure_remote_auth():
         return HTMLResponse(html)
 
     @mcp.custom_route("/auth/login", methods=["POST"])
+    @rate_limit(auth_rate_limiter)
     async def auth_login_post(request: Request) -> Response:
         """Handle password submission and complete authorization."""
         form = await request.form()
         session_id = form.get("session", "")
         password = form.get("password", "")
+        client_ip = get_client_ip(request)
 
         if not session_id or not password:
             return HTMLResponse(
@@ -1894,8 +1903,15 @@ def _configure_remote_auth():
             redirect_url = oauth_provider.complete_authorization(
                 str(session_id), str(password)
             )
+            log_auth_event("oauth_consent", client_ip=client_ip, success=True)
             return RedirectResponse(url=redirect_url, status_code=302)
         except ValueError as e:
+            log_auth_event(
+                "oauth_consent",
+                client_ip=client_ip,
+                success=False,
+                details=str(e),
+            )
             error_html = f'<div class="error">{str(e)}</div>'
             html = LOGIN_PAGE_HTML.format(session=session_id, error_html=error_html)
             return HTMLResponse(html, status_code=401)
@@ -1916,6 +1932,7 @@ def _configure_remote_auth():
         return await handle_status_get(request)
 
     @mcp.custom_route("/admin/status", methods=["POST"])
+    @rate_limit(admin_rate_limiter)
     async def admin_status_post(request: Request) -> Response:
         return await handle_status_post(request)
 
@@ -1924,6 +1941,7 @@ def _configure_remote_auth():
         return await handle_reauth_get(request)
 
     @mcp.custom_route("/admin/reauth", methods=["POST"])
+    @rate_limit(admin_rate_limiter)
     async def admin_reauth_post(request: Request) -> Response:
         return await handle_reauth_post(request)
 
@@ -1958,17 +1976,43 @@ def main():
         # Local mode: register browser-based auth tools
         register_stdio_tools()
         logger.info("Starting Monarch Money MCP Server (stdio mode)...")
+        mcp.run(transport=transport)
     else:
-        # Remote mode: configure HTTP settings and OAuth
+        # Remote mode: configure HTTP settings, OAuth, and security middleware
         mcp.settings.host = args.host
         mcp.settings.port = args.port
         _configure_remote_auth()
         logger.info(
             f"Starting Monarch Money MCP Server (streamable-http mode on {args.host}:{args.port})..."
         )
+        _run_remote_server()
+
+
+def _run_remote_server():
+    """Run the MCP server in streamable-http mode with security middleware."""
+    import anyio
+    import uvicorn
+
+    from monarch_mcp_server.security import OriginValidationMiddleware
+
+    async def _serve():
+        # Build the Starlette app from FastMCP
+        starlette_app = mcp.streamable_http_app()
+
+        # Wrap with Origin validation middleware
+        starlette_app = OriginValidationMiddleware(starlette_app)
+
+        config = uvicorn.Config(
+            starlette_app,
+            host=mcp.settings.host,
+            port=mcp.settings.port,
+            log_level=mcp.settings.log_level.lower(),
+        )
+        server = uvicorn.Server(config)
+        await server.serve()
 
     try:
-        mcp.run(transport=transport)
+        anyio.run(_serve)
     except Exception as e:
         logger.error(f"Failed to run server: {str(e)}")
         raise

@@ -83,7 +83,9 @@ class MonarchOAuthProvider:
     async def get_client(self, client_id: str) -> Optional[OAuthClientInformationFull]:
         """Look up the pre-shared client by ID. Returns None for unknown clients."""
         if not self._client_id or client_id != self._client_id:
-            logger.warning(f"Unknown client_id attempted: {client_id}")
+            logger.warning(
+                f"AUTH_EVENT=client_lookup | client={client_id} | success=False | detail=unknown client_id"
+            )
             return None
 
         # Build a synthetic OAuthClientInformationFull for the pre-shared client
@@ -157,7 +159,9 @@ class MonarchOAuthProvider:
             raise ValueError("Server auth password not configured")
 
         if not secrets.compare_digest(password, self._auth_password):
-            logger.warning("Invalid password attempt during authorization")
+            logger.warning(
+                "AUTH_EVENT=password_gate | success=False | detail=invalid password"
+            )
             raise ValueError("Invalid password")
 
         params: AuthorizationParams = session["params"]
@@ -190,7 +194,9 @@ class MonarchOAuthProvider:
             str(params.redirect_uri), **redirect_params
         )
 
-        logger.info("Authorization completed successfully, issuing auth code")
+        logger.info(
+            "AUTH_EVENT=authorization_complete | success=True | detail=auth code issued"
+        )
         return redirect_url
 
     # ---------------------------------------------------------------
@@ -252,7 +258,9 @@ class MonarchOAuthProvider:
             expires_at=int(now + REFRESH_TOKEN_LIFETIME),
         )
 
-        logger.info("Exchanged authorization code for access + refresh tokens")
+        logger.info(
+            "AUTH_EVENT=token_exchange | success=True | detail=access+refresh tokens issued"
+        )
 
         return OAuthToken(
             access_token=access_token_str,
@@ -324,7 +332,9 @@ class MonarchOAuthProvider:
             expires_at=int(now + REFRESH_TOKEN_LIFETIME),
         )
 
-        logger.info("Refresh token rotated, issued new access + refresh tokens")
+        logger.info(
+            "AUTH_EVENT=token_refresh | success=True | detail=rotated to new tokens"
+        )
 
         return OAuthToken(
             access_token=new_access_token_str,
