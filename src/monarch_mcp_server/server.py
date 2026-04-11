@@ -239,30 +239,159 @@ def debug_session_loading() -> str:
         return f"❌ Keyring access failed:\nError: {str(e)}\nType: {type(e)}\nTraceback:\n{error_details}"
 
 
+# =============================================================================
+# Custom GraphQL query for accounts with payment/credit fields
+# =============================================================================
+# Discovered via live API probing — these are the confirmed valid fields:
+#   minimumPayment: works for credit cards and loans
+#   apr: works for credit cards (None for loans)
+#   interestRate: works for loans (None for credit cards)
+#   limit: credit limit for credit cards (None for loans)
+# Note: Fields like creditLimit, availableCredit, paymentDueDate, pastDueAmount
+# do NOT exist in Monarch's schema (verified April 2026).
+
+GET_ACCOUNTS_WITH_PAYMENT_FIELDS_QUERY = """
+query GetAccountsWithPaymentFields {
+  accounts {
+    id
+    displayName
+    syncDisabled
+    deactivatedAt
+    isHidden
+    isAsset
+    mask
+    createdAt
+    updatedAt
+    displayLastUpdatedAt
+    currentBalance
+    displayBalance
+    includeInNetWorth
+    hideFromList
+    hideTransactionsFromReports
+    dataProvider
+    dataProviderAccountId
+    isManual
+    transactionsCount
+    holdingsCount
+    order
+    logoUrl
+    type {
+      name
+      display
+      group
+      __typename
+    }
+    subtype {
+      name
+      display
+      __typename
+    }
+    credential {
+      id
+      updateRequired
+      disconnectedFromDataProviderAt
+      dataProvider
+      institution {
+        id
+        name
+        status
+        __typename
+      }
+      __typename
+    }
+    institution {
+      id
+      name
+      primaryColor
+      url
+      __typename
+    }
+    minimumPayment
+    interestRate
+    apr
+    limit
+    __typename
+  }
+}
+"""
+
+
 @mcp.tool()
 def get_accounts() -> str:
-    """Get all financial accounts from Monarch Money."""
+    """Get all financial accounts from Monarch Money.
+
+    Returns account details including balances, types, institutions, and
+    when available, credit/loan payment information (minimum payment,
+    APR, interest rate, credit limit).
+    """
     try:
+        from gql import gql
 
         async def _get_accounts():
             client = await get_monarch_client()
-            return await client.get_accounts()
 
-        accounts = run_async(_get_accounts())
+            # Try custom query with payment fields first
+            try:
+                query = gql(GET_ACCOUNTS_WITH_PAYMENT_FIELDS_QUERY)
+                result = await client.gql_call(
+                    operation="GetAccountsWithPaymentFields",
+                    graphql_query=query,
+                    variables={},
+                )
+                return result.get("accounts", []), True
+            except Exception as e:
+                logger.warning(
+                    f"Custom account query failed, falling back to standard: {e}"
+                )
+                # Fall back to library's get_accounts() (no payment fields)
+                result = await client.get_accounts()
+                return result.get("accounts", []), False
+
+        accounts, has_payment_fields = run_async(_get_accounts())
 
         # Format accounts for display
         account_list = []
-        for account in accounts.get("accounts", []):
+        for account in accounts:
             account_info = {
                 "id": account.get("id"),
                 "name": account.get("displayName") or account.get("name"),
                 "type": (account.get("type") or {}).get("name"),
+                "type_display": (account.get("type") or {}).get("display"),
+                "type_group": (account.get("type") or {}).get("group"),
+                "subtype": (account.get("subtype") or {}).get("name"),
+                "subtype_display": (account.get("subtype") or {}).get("display"),
                 "balance": account.get("currentBalance"),
+                "display_balance": account.get("displayBalance"),
                 "institution": (account.get("institution") or {}).get("name"),
+                "institution_url": (account.get("institution") or {}).get("url"),
                 "is_active": account.get("isActive")
                 if "isActive" in account
                 else not account.get("deactivatedAt"),
+                "is_asset": account.get("isAsset"),
+                "is_manual": account.get("isManual"),
+                "include_in_net_worth": account.get("includeInNetWorth"),
+                "mask": account.get("mask"),
+                "logo_url": account.get("logoUrl"),
+                "data_provider": account.get("dataProvider")
+                or (account.get("credential") or {}).get("dataProvider"),
+                "last_updated": account.get("displayLastUpdatedAt"),
             }
+
+            # Add payment details for credit/loan accounts when available
+            if has_payment_fields:
+                payment_info = {}
+                for api_field, output_field in [
+                    ("minimumPayment", "minimum_payment"),
+                    ("apr", "apr"),
+                    ("interestRate", "interest_rate"),
+                    ("limit", "credit_limit"),
+                ]:
+                    value = account.get(api_field)
+                    if value is not None:
+                        payment_info[output_field] = value
+                if payment_info:
+                    account_info["payment_details"] = payment_info
+
             account_list.append(account_info)
 
         return json.dumps(account_list, indent=2, default=str)
