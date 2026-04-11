@@ -1947,8 +1947,8 @@ def main():
     parser.add_argument(
         "--port",
         type=int,
-        default=8000,
-        help="Port to bind to in HTTP mode (default: 8000)",
+        default=int(os.environ.get("PORT", "8000")),
+        help="Port to bind to in HTTP mode (default: PORT env var or 8000)",
     )
     args = parser.parse_args()
 
