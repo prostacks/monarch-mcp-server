@@ -1900,7 +1900,34 @@ def _configure_remote_auth():
             html = LOGIN_PAGE_HTML.format(session=session_id, error_html=error_html)
             return HTMLResponse(html, status_code=401)
 
-    logger.info("OAuth auth provider and login routes configured")
+    # ---------------------------------------------------------------
+    # Admin routes: /admin/status and /admin/reauth
+    # ---------------------------------------------------------------
+
+    from monarch_mcp_server.admin import (
+        handle_reauth_get,
+        handle_reauth_post,
+        handle_status_get,
+        handle_status_post,
+    )
+
+    @mcp.custom_route("/admin/status", methods=["GET"])
+    async def admin_status_get(request: Request) -> Response:
+        return await handle_status_get(request)
+
+    @mcp.custom_route("/admin/status", methods=["POST"])
+    async def admin_status_post(request: Request) -> Response:
+        return await handle_status_post(request)
+
+    @mcp.custom_route("/admin/reauth", methods=["GET"])
+    async def admin_reauth_get(request: Request) -> Response:
+        return await handle_reauth_get(request)
+
+    @mcp.custom_route("/admin/reauth", methods=["POST"])
+    async def admin_reauth_post(request: Request) -> Response:
+        return await handle_reauth_post(request)
+
+    logger.info("OAuth auth provider, login routes, and admin routes configured")
 
 
 def main():
