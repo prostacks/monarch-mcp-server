@@ -1714,6 +1714,195 @@ def get_transactions_needing_review(
         return f"Error getting transactions: {str(e)}"
 
 
+def _configure_remote_auth():
+    """Configure OAuth auth provider and login routes for remote/HTTP mode."""
+    from starlette.requests import Request
+    from starlette.responses import HTMLResponse, RedirectResponse, Response
+
+    from mcp.server.auth.settings import (
+        AuthSettings,
+        ClientRegistrationOptions,
+        RevocationOptions,
+    )
+    from pydantic import AnyHttpUrl
+
+    from monarch_mcp_server.oauth import MonarchOAuthProvider
+
+    server_url = os.environ.get("MCP_SERVER_URL", "")
+    if not server_url:
+        logger.warning(
+            "MCP_SERVER_URL not set. OAuth metadata endpoints will not work correctly. "
+            "Set this to your public Railway URL (e.g., https://monarch-mcp-server.up.railway.app)"
+        )
+        server_url = "http://localhost:8000"
+
+    # Create the OAuth provider
+    oauth_provider = MonarchOAuthProvider()
+
+    # Configure FastMCP with auth
+    mcp.settings.auth = AuthSettings(
+        issuer_url=AnyHttpUrl(server_url),
+        resource_server_url=AnyHttpUrl(server_url),
+        client_registration_options=ClientRegistrationOptions(enabled=False),
+        revocation_options=RevocationOptions(enabled=True),
+    )
+    mcp._auth_server_provider = oauth_provider
+
+    # The SDK auto-creates a ProviderTokenVerifier from the auth_server_provider
+    from mcp.server.auth.provider import ProviderTokenVerifier
+
+    mcp._token_verifier = ProviderTokenVerifier(oauth_provider)
+
+    # ---------------------------------------------------------------
+    # Custom routes: /auth/login (GET = form, POST = submit)
+    # ---------------------------------------------------------------
+
+    LOGIN_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monarch MCP Server - Authorize</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #e0e0e0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }}
+        .container {{
+            background: #16213e;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 400px;
+            width: 90%;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }}
+        h1 {{
+            font-size: 1.4rem;
+            margin: 0 0 0.5rem 0;
+            color: #4ecca3;
+        }}
+        p {{
+            font-size: 0.9rem;
+            color: #a0a0b0;
+            margin: 0 0 1.5rem 0;
+        }}
+        .warning {{
+            background: rgba(255, 193, 7, 0.1);
+            border: 1px solid rgba(255, 193, 7, 0.3);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 1.5rem;
+            font-size: 0.85rem;
+            color: #ffc107;
+        }}
+        label {{
+            display: block;
+            font-size: 0.85rem;
+            margin-bottom: 0.4rem;
+            color: #b0b0c0;
+        }}
+        input[type="password"] {{
+            width: 100%;
+            padding: 0.7rem;
+            border: 1px solid #2a2a4a;
+            border-radius: 8px;
+            background: #0f0f23;
+            color: #e0e0e0;
+            font-size: 1rem;
+            box-sizing: border-box;
+            margin-bottom: 1rem;
+        }}
+        input[type="password"]:focus {{
+            outline: none;
+            border-color: #4ecca3;
+        }}
+        button {{
+            width: 100%;
+            padding: 0.75rem;
+            background: #4ecca3;
+            color: #1a1a2e;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        button:hover {{
+            background: #3dba8f;
+        }}
+        .error {{
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            border-radius: 8px;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            font-size: 0.85rem;
+            color: #ef4444;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Monarch MCP Server</h1>
+        <p>Authorize Claude to access your Monarch Money data.</p>
+        <div class="warning">
+            Only approve this if you initiated the connection from claude.ai.
+        </div>
+        {error_html}
+        <form method="POST" action="/auth/login">
+            <input type="hidden" name="session" value="{session}">
+            <label for="password">Server Password</label>
+            <input type="password" id="password" name="password" required autofocus>
+            <button type="submit">Authorize</button>
+        </form>
+    </div>
+</body>
+</html>"""
+
+    @mcp.custom_route("/auth/login", methods=["GET"])
+    async def auth_login_get(request: Request) -> Response:
+        """Render the password gate login form."""
+        session = request.query_params.get("session", "")
+        if not session:
+            return HTMLResponse(
+                "<h1>400 Bad Request</h1><p>Missing session parameter.</p>",
+                status_code=400,
+            )
+        html = LOGIN_PAGE_HTML.format(session=session, error_html="")
+        return HTMLResponse(html)
+
+    @mcp.custom_route("/auth/login", methods=["POST"])
+    async def auth_login_post(request: Request) -> Response:
+        """Handle password submission and complete authorization."""
+        form = await request.form()
+        session_id = form.get("session", "")
+        password = form.get("password", "")
+
+        if not session_id or not password:
+            return HTMLResponse(
+                "<h1>400 Bad Request</h1><p>Missing session or password.</p>",
+                status_code=400,
+            )
+
+        try:
+            redirect_url = oauth_provider.complete_authorization(
+                str(session_id), str(password)
+            )
+            return RedirectResponse(url=redirect_url, status_code=302)
+        except ValueError as e:
+            error_html = f'<div class="error">{str(e)}</div>'
+            html = LOGIN_PAGE_HTML.format(session=session_id, error_html=error_html)
+            return HTMLResponse(html, status_code=401)
+
+    logger.info("OAuth auth provider and login routes configured")
+
+
 def main():
     """Main entry point for the server."""
     parser = argparse.ArgumentParser(description="Monarch Money MCP Server")
@@ -1743,9 +1932,10 @@ def main():
         register_stdio_tools()
         logger.info("Starting Monarch Money MCP Server (stdio mode)...")
     else:
-        # Remote mode: configure HTTP settings
+        # Remote mode: configure HTTP settings and OAuth
         mcp.settings.host = args.host
         mcp.settings.port = args.port
+        _configure_remote_auth()
         logger.info(
             f"Starting Monarch Money MCP Server (streamable-http mode on {args.host}:{args.port})..."
         )
