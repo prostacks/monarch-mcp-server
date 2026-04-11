@@ -1,5 +1,6 @@
 """Monarch Money MCP Server - Main server implementation."""
 
+import argparse
 import os
 import logging
 import asyncio
@@ -13,8 +14,7 @@ from dotenv import load_dotenv
 from mcp.server.auth.provider import AccessTokenT
 from mcp.server.fastmcp import FastMCP
 import mcp.types as types
-from monarchmoney import MonarchMoney, RequireMFAException
-from monarchmoney.monarchmoney import MonarchMoneyEndpoints
+from monarchmoney import MonarchMoney, MonarchMoneyEndpoints, RequireMFAException
 from pydantic import BaseModel, Field
 from monarch_mcp_server.secure_session import secure_session
 
@@ -95,19 +95,21 @@ def setup_authentication() -> str:
     """Get instructions for setting up secure authentication with Monarch Money."""
     return """🔐 Monarch Money - Authentication Options
 
-Option 1: Google OAuth (Recommended)
+Option 1: Google OAuth (Recommended for local/stdio mode)
    Call the 'authenticate_with_google' tool to open a browser
    and sign in with your Google account.
 
 Option 2: Email/Password (Terminal)
    Run in terminal: python login_setup.py
 
+Option 3: Admin Re-auth (Remote/HTTP mode)
+   Visit /admin/reauth on the server to re-authenticate.
+
 ✅ Session persists across restarts
-✅ Token stored securely in system keyring"""
+✅ Token stored securely in system keyring (local) or server memory (remote)"""
 
 
-@mcp.tool()
-def authenticate_with_google() -> str:
+def _authenticate_with_google_impl() -> str:
     """
     Open a browser window to authenticate with Monarch Money using Google OAuth.
 
@@ -118,6 +120,7 @@ def authenticate_with_google() -> str:
     4. Token is automatically captured and saved
 
     Use this when you get authentication errors or need to refresh your session.
+    Only available in stdio (local) mode.
 
     Returns:
         Success or failure message.
@@ -133,12 +136,12 @@ def authenticate_with_google() -> str:
                 # Launch browser in non-headless mode
                 browser = await p.chromium.launch(
                     headless=False,
-                    args=['--disable-blink-features=AutomationControlled']
+                    args=["--disable-blink-features=AutomationControlled"],
                 )
 
                 context = await browser.new_context(
-                    viewport={'width': 1280, 'height': 800},
-                    user_agent='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
+                    viewport={"width": 1280, "height": 800},
+                    user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
                 )
 
                 page = await context.new_page()
@@ -146,11 +149,11 @@ def authenticate_with_google() -> str:
                 # Capture auth token from requests
                 async def handle_request(request):
                     nonlocal captured_token
-                    auth_header = request.headers.get('authorization', '')
-                    if auth_header.startswith('Token ') and not captured_token:
-                        captured_token = auth_header.replace('Token ', '')
+                    auth_header = request.headers.get("authorization", "")
+                    if auth_header.startswith("Token ") and not captured_token:
+                        captured_token = auth_header.replace("Token ", "")
 
-                page.on('request', handle_request)
+                page.on("request", handle_request)
 
                 # Navigate to login
                 await page.goto("https://app.monarch.com/login")
@@ -167,19 +170,32 @@ def authenticate_with_google() -> str:
                 if captured_token:
                     # Save to keyring
                     secure_session.save_token(captured_token)
-                    return {"success": True, "message": "Authentication successful! Token saved."}
+                    return {
+                        "success": True,
+                        "message": "Authentication successful! Token saved.",
+                    }
                 else:
-                    return {"success": False, "message": "Timeout - no token captured. Please try again."}
+                    return {
+                        "success": False,
+                        "message": "Timeout - no token captured. Please try again.",
+                    }
 
         result = run_async(_authenticate())
         return json.dumps(result, indent=2)
 
     except Exception as e:
         logger.error(f"Authentication failed: {e}")
-        return json.dumps({
-            "success": False,
-            "message": f"Authentication failed: {str(e)}"
-        }, indent=2)
+        return json.dumps(
+            {"success": False, "message": f"Authentication failed: {str(e)}"}, indent=2
+        )
+
+
+def register_stdio_tools():
+    """Register tools that are only available in stdio (local) mode."""
+    # Set the function name so the MCP tool is registered as 'authenticate_with_google'
+    _authenticate_with_google_impl.__name__ = "authenticate_with_google"
+    mcp.tool()(_authenticate_with_google_impl)
+    logger.info("Registered stdio-only tools: authenticate_with_google")
 
 
 @mcp.tool()
@@ -657,10 +673,12 @@ def bulk_categorize_transactions(
                     results["successful"] += 1
                 except Exception as e:
                     results["failed"] += 1
-                    results["errors"].append({
-                        "transaction_id": txn_id,
-                        "error": str(e),
-                    })
+                    results["errors"].append(
+                        {
+                            "transaction_id": txn_id,
+                            "error": str(e),
+                        }
+                    )
 
             return results
 
@@ -856,12 +874,22 @@ def search_transactions(
                 "id": txn.get("id"),
                 "date": txn.get("date"),
                 "amount": txn.get("amount"),
-                "merchant": txn.get("merchant", {}).get("name") if txn.get("merchant") else None,
+                "merchant": txn.get("merchant", {}).get("name")
+                if txn.get("merchant")
+                else None,
                 "original_name": txn.get("plaidName") or txn.get("originalName"),
-                "category": txn.get("category", {}).get("name") if txn.get("category") else None,
-                "category_id": txn.get("category", {}).get("id") if txn.get("category") else None,
-                "account": txn.get("account", {}).get("displayName") if txn.get("account") else None,
-                "account_id": txn.get("account", {}).get("id") if txn.get("account") else None,
+                "category": txn.get("category", {}).get("name")
+                if txn.get("category")
+                else None,
+                "category_id": txn.get("category", {}).get("id")
+                if txn.get("category")
+                else None,
+                "account": txn.get("account", {}).get("displayName")
+                if txn.get("account")
+                else None,
+                "account_id": txn.get("account", {}).get("id")
+                if txn.get("account")
+                else None,
                 "notes": txn.get("notes"),
                 "needs_review": txn.get("needsReview", False),
                 "is_pending": txn.get("pending", False),
@@ -872,7 +900,9 @@ def search_transactions(
                 "tags": [
                     {"id": tag.get("id"), "name": tag.get("name")}
                     for tag in txn.get("tags", [])
-                ] if txn.get("tags") else [],
+                ]
+                if txn.get("tags")
+                else [],
             }
             transaction_list.append(transaction_info)
 
@@ -984,12 +1014,21 @@ def get_recurring_transactions(
                     "id": item.get("stream", {}).get("id"),
                     "frequency": item.get("stream", {}).get("frequency"),
                     "amount": item.get("stream", {}).get("amount"),
-                    "is_approximate": item.get("stream", {}).get("isApproximate", False),
+                    "is_approximate": item.get("stream", {}).get(
+                        "isApproximate", False
+                    ),
                     "merchant": item.get("stream", {}).get("merchant", {}).get("name")
-                    if item.get("stream", {}).get("merchant") else None,
-                } if item.get("stream") else None,
-                "category": item.get("category", {}).get("name") if item.get("category") else None,
-                "account": item.get("account", {}).get("displayName") if item.get("account") else None,
+                    if item.get("stream", {}).get("merchant")
+                    else None,
+                }
+                if item.get("stream")
+                else None,
+                "category": item.get("category", {}).get("name")
+                if item.get("category")
+                else None,
+                "account": item.get("account", {}).get("displayName")
+                if item.get("account")
+                else None,
             }
             recurring_list.append(recurring_info)
 
@@ -1171,20 +1210,28 @@ def get_transaction_rules() -> str:
                 "amount_criteria": rule.get("amountCriteria"),
                 "category_ids": rule.get("categoryIds"),
                 "account_ids": rule.get("accountIds"),
-                "use_original_statement": rule.get("merchantCriteriaUseOriginalStatement"),
+                "use_original_statement": rule.get(
+                    "merchantCriteriaUseOriginalStatement"
+                ),
                 # Actions
                 "set_category_action": {
                     "id": rule.get("setCategoryAction", {}).get("id"),
                     "name": rule.get("setCategoryAction", {}).get("name"),
-                } if rule.get("setCategoryAction") else None,
+                }
+                if rule.get("setCategoryAction")
+                else None,
                 "set_merchant_action": {
                     "id": rule.get("setMerchantAction", {}).get("id"),
                     "name": rule.get("setMerchantAction", {}).get("name"),
-                } if rule.get("setMerchantAction") else None,
+                }
+                if rule.get("setMerchantAction")
+                else None,
                 "add_tags_action": [
                     {"id": tag.get("id"), "name": tag.get("name")}
                     for tag in rule.get("addTagsAction", [])
-                ] if rule.get("addTagsAction") else None,
+                ]
+                if rule.get("addTagsAction")
+                else None,
                 "link_goal_action": rule.get("linkGoalAction"),
                 "hide_from_reports_action": rule.get("setHideFromReportsAction"),
                 "review_status_action": rule.get("reviewStatusAction"),
@@ -1258,10 +1305,12 @@ def create_transaction_rule(
 
             # Merchant criteria
             if merchant_criteria_operator and merchant_criteria_value:
-                rule_input["merchantNameCriteria"] = [{
-                    "operator": merchant_criteria_operator,
-                    "value": merchant_criteria_value,
-                }]
+                rule_input["merchantNameCriteria"] = [
+                    {
+                        "operator": merchant_criteria_operator,
+                        "value": merchant_criteria_value,
+                    }
+                ]
 
             # Amount criteria
             if amount_operator and amount_value is not None:
@@ -1302,7 +1351,9 @@ def create_transaction_rule(
         if errors:
             return json.dumps({"success": False, "errors": errors}, indent=2)
 
-        return json.dumps({"success": True, "message": "Rule created successfully"}, indent=2)
+        return json.dumps(
+            {"success": True, "message": "Rule created successfully"}, indent=2
+        )
     except Exception as e:
         logger.error(f"Failed to create transaction rule: {e}")
         return f"Error creating transaction rule: {str(e)}"
@@ -1359,10 +1410,12 @@ def update_transaction_rule(
 
             # Merchant criteria
             if merchant_criteria_operator and merchant_criteria_value:
-                rule_input["merchantNameCriteria"] = [{
-                    "operator": merchant_criteria_operator,
-                    "value": merchant_criteria_value,
-                }]
+                rule_input["merchantNameCriteria"] = [
+                    {
+                        "operator": merchant_criteria_operator,
+                        "value": merchant_criteria_value,
+                    }
+                ]
 
             # Amount criteria
             if amount_operator and amount_value is not None:
@@ -1403,7 +1456,9 @@ def update_transaction_rule(
         if errors:
             return json.dumps({"success": False, "errors": errors}, indent=2)
 
-        return json.dumps({"success": True, "message": "Rule updated successfully"}, indent=2)
+        return json.dumps(
+            {"success": True, "message": "Rule updated successfully"}, indent=2
+        )
     except Exception as e:
         logger.error(f"Failed to update transaction rule: {e}")
         return f"Error updating transaction rule: {str(e)}"
@@ -1440,7 +1495,9 @@ def delete_transaction_rule(
         # Check result
         delete_result = result.get("deleteTransactionRule", {})
         if delete_result.get("deleted"):
-            return json.dumps({"success": True, "message": "Rule deleted successfully"}, indent=2)
+            return json.dumps(
+                {"success": True, "message": "Rule deleted successfully"}, indent=2
+            )
 
         errors = delete_result.get("errors")
         if errors:
@@ -1493,7 +1550,9 @@ def get_categories() -> str:
                 "name": cat.get("name"),
                 "icon": cat.get("icon"),
                 "group": cat.get("group", {}).get("name") if cat.get("group") else None,
-                "group_id": cat.get("group", {}).get("id") if cat.get("group") else None,
+                "group_id": cat.get("group", {}).get("id")
+                if cat.get("group")
+                else None,
                 "is_system_category": cat.get("isSystemCategory", False),
                 "is_disabled": cat.get("isDisabled", False),
             }
@@ -1528,7 +1587,9 @@ def get_category_groups() -> str:
                 "name": group.get("name"),
                 "type": group.get("type"),
                 "budget_variability": group.get("budgetVariability"),
-                "group_level_budgeting_enabled": group.get("groupLevelBudgetingEnabled", False),
+                "group_level_budgeting_enabled": group.get(
+                    "groupLevelBudgetingEnabled", False
+                ),
                 "categories": [
                     {
                         "id": cat.get("id"),
@@ -1583,7 +1644,9 @@ def get_transactions_needing_review(
             # Date range filter
             if days:
                 end_date = datetime.now().strftime("%Y-%m-%d")
-                start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+                start_date = (datetime.now() - timedelta(days=days)).strftime(
+                    "%Y-%m-%d"
+                )
                 filters["start_date"] = start_date
                 filters["end_date"] = end_date
 
@@ -1616,12 +1679,22 @@ def get_transactions_needing_review(
                 "id": txn.get("id"),
                 "date": txn.get("date"),
                 "amount": txn.get("amount"),
-                "merchant": txn.get("merchant", {}).get("name") if txn.get("merchant") else None,
+                "merchant": txn.get("merchant", {}).get("name")
+                if txn.get("merchant")
+                else None,
                 "original_name": txn.get("plaidName") or txn.get("originalName"),
-                "category": txn.get("category", {}).get("name") if txn.get("category") else None,
-                "category_id": txn.get("category", {}).get("id") if txn.get("category") else None,
-                "account": txn.get("account", {}).get("displayName") if txn.get("account") else None,
-                "account_id": txn.get("account", {}).get("id") if txn.get("account") else None,
+                "category": txn.get("category", {}).get("name")
+                if txn.get("category")
+                else None,
+                "category_id": txn.get("category", {}).get("id")
+                if txn.get("category")
+                else None,
+                "account": txn.get("account", {}).get("displayName")
+                if txn.get("account")
+                else None,
+                "account_id": txn.get("account", {}).get("id")
+                if txn.get("account")
+                else None,
                 "notes": txn.get("notes"),
                 "needs_review": txn.get("needsReview", False),
                 "is_pending": txn.get("pending", False),
@@ -1629,7 +1702,9 @@ def get_transactions_needing_review(
                 "tags": [
                     {"id": tag.get("id"), "name": tag.get("name")}
                     for tag in txn.get("tags", [])
-                ] if txn.get("tags") else [],
+                ]
+                if txn.get("tags")
+                else [],
             }
             transaction_list.append(transaction_info)
 
@@ -1641,9 +1716,42 @@ def get_transactions_needing_review(
 
 def main():
     """Main entry point for the server."""
-    logger.info("Starting Monarch Money MCP Server...")
+    parser = argparse.ArgumentParser(description="Monarch Money MCP Server")
+    parser.add_argument(
+        "--transport",
+        choices=["stdio", "streamable-http"],
+        default="stdio",
+        help="Transport mode: 'stdio' for local (Claude Desktop), 'streamable-http' for remote deployment (default: stdio)",
+    )
+    parser.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="Host to bind to in HTTP mode (default: 0.0.0.0)",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind to in HTTP mode (default: 8000)",
+    )
+    args = parser.parse_args()
+
+    transport = args.transport
+
+    if transport == "stdio":
+        # Local mode: register browser-based auth tools
+        register_stdio_tools()
+        logger.info("Starting Monarch Money MCP Server (stdio mode)...")
+    else:
+        # Remote mode: configure HTTP settings
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        logger.info(
+            f"Starting Monarch Money MCP Server (streamable-http mode on {args.host}:{args.port})..."
+        )
+
     try:
-        mcp.run()
+        mcp.run(transport=transport)
     except Exception as e:
         logger.error(f"Failed to run server: {str(e)}")
         raise

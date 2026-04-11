@@ -1,7 +1,17 @@
 # Monarch MCP Server - Claude Development Guide
 
+## IMPORTANT: Read the Remote MCP Plan
+
+If you are an AI agent working on this codebase, **read `REMOTE_MCP_PLAN.md` first**.
+It contains the complete implementation plan for converting this server from local stdio
+to a remote Streamable HTTP server with OAuth 2.1 auth, deployable to Railway.
+
+All design decisions, security considerations, file changes, and phased implementation
+steps are documented there. Do not make architectural decisions that contradict the plan
+without discussing with the user first.
+
 ## Project Overview
-This is a Model Context Protocol (MCP) server for Monarch Money personal finance platform. We're extending the original robcerda/monarch-mcp-server with enhanced transaction review workflow capabilities.
+This is a Model Context Protocol (MCP) server for Monarch Money personal finance platform. We're extending the original robcerda/monarch-mcp-server with enhanced transaction review workflow capabilities. The next major milestone is converting to a remote MCP server -- see `REMOTE_MCP_PLAN.md` for details.
 
 ## Goal
 Build tools for:
