@@ -322,9 +322,15 @@ def get_accounts() -> str:
 
     Returns account details including balances, types, institutions, and
     when available, credit/loan payment information (minimum payment,
-    APR, interest rate, credit limit).
+    APR, interest rate, credit limit, due day).
+
+    For credit and loan accounts, the due_day field (day of month when
+    payment is typically due) is automatically populated from recurring
+    transaction data when available.
     """
     try:
+        from datetime import datetime, timedelta
+
         from gql import gql
 
         async def _get_accounts():
@@ -347,10 +353,76 @@ def get_accounts() -> str:
                 result = await client.get_accounts()
                 return result.get("accounts", []), False
 
+        async def _get_due_days(account_ids_needing_due_day):
+            """Fetch recurring transactions and extract due days per account.
+
+            For each account, finds the next upcoming (non-past) recurring
+            transaction item and extracts the day-of-month from its date.
+            """
+            if not account_ids_needing_due_day:
+                return {}
+
+            client = await get_monarch_client()
+
+            # Fetch a 2-month window to ensure we capture upcoming items
+            now = datetime.now()
+            start = now.strftime("%Y-%m-01")
+            # Next month end — go ~60 days out
+            end_dt = now + timedelta(days=60)
+            end = end_dt.strftime("%Y-%m-28")
+
+            try:
+                query = gql(GET_RECURRING_TRANSACTIONS_ENRICHED_QUERY)
+                result = await client.gql_call(
+                    operation="Web_GetUpcomingRecurringTransactionItems",
+                    graphql_query=query,
+                    variables={
+                        "startDate": start,
+                        "endDate": end,
+                        "filters": {},
+                    },
+                )
+            except Exception:
+                # Fallback to library
+                try:
+                    result = await client.get_recurring_transactions(
+                        start_date=start, end_date=end
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to fetch recurring transactions for due days: {e}"
+                    )
+                    return {}
+
+            # Build account_id → due_day lookup
+            # Use the first non-past item per account (closest upcoming date)
+            due_day_map = {}
+            for item in result.get("recurringTransactionItems", []):
+                account = item.get("account") or {}
+                acct_id = account.get("id")
+                if not acct_id or acct_id not in account_ids_needing_due_day:
+                    continue
+                if acct_id in due_day_map:
+                    continue  # Already found a due day for this account
+                date_str = item.get("date")
+                if not date_str:
+                    continue
+                try:
+                    day = int(date_str.split("-")[2])
+                    due_day_map[acct_id] = day
+                except (IndexError, ValueError):
+                    continue
+
+            return due_day_map
+
         accounts, has_payment_fields = run_async(_get_accounts())
 
         # Format accounts for display
         account_list = []
+        # Track which accounts need due_day lookup
+        credit_loan_types = {"credit", "loan"}
+        accounts_needing_due_day = set()
+
         for account in accounts:
             account_info = {
                 "id": account.get("id"),
@@ -392,7 +464,30 @@ def get_accounts() -> str:
                 if payment_info:
                     account_info["payment_details"] = payment_info
 
+            # Track credit/loan accounts for due_day enrichment
+            type_name = (account.get("type") or {}).get("name", "")
+            if type_name and type_name.lower() in credit_loan_types:
+                acct_id = account.get("id")
+                if acct_id:
+                    accounts_needing_due_day.add(acct_id)
+
             account_list.append(account_info)
+
+        # Enrich with due_day from recurring transactions (Option B)
+        if accounts_needing_due_day:
+            try:
+                due_day_map = run_async(_get_due_days(accounts_needing_due_day))
+                for account_info in account_list:
+                    acct_id = account_info.get("id")
+                    if acct_id in due_day_map:
+                        if "payment_details" not in account_info:
+                            account_info["payment_details"] = {}
+                        account_info["payment_details"]["due_day"] = due_day_map[
+                            acct_id
+                        ]
+            except Exception as e:
+                logger.warning(f"Failed to enrich accounts with due days: {e}")
+                # Graceful degradation — accounts still returned without due_day
 
         return json.dumps(account_list, indent=2, default=str)
     except Exception as e:
@@ -1355,6 +1450,65 @@ def delete_transaction(
         return f"Error deleting transaction: {str(e)}"
 
 
+# =============================================================================
+# Custom GraphQL query for recurring transactions with enriched stream fields
+# =============================================================================
+# Extends the library's Web_GetUpcomingRecurringTransactionItems query with
+# additional stream fields discovered via live API probing (April 2026):
+#   isActive: whether the recurring stream is active (boolean)
+#   name: merchant/stream name (string)
+#   logoUrl: merchant logo URL (string)
+# Fields that do NOT exist on RecurringTransactionStream (verified April 2026):
+#   dayOfMonth, dueDay, dueDate, nextDueDate, billDate, billingDay, startDate,
+#   endDate, status, category, account, type, transactionCount, etc.
+
+GET_RECURRING_TRANSACTIONS_ENRICHED_QUERY = """
+query Web_GetUpcomingRecurringTransactionItems(
+    $startDate: Date!, $endDate: Date!, $filters: RecurringTransactionFilter
+) {
+    recurringTransactionItems(
+        startDate: $startDate
+        endDate: $endDate
+        filters: $filters
+    ) {
+        stream {
+            id
+            frequency
+            amount
+            isApproximate
+            isActive
+            name
+            logoUrl
+            merchant {
+                id
+                name
+                logoUrl
+                __typename
+            }
+            __typename
+        }
+        date
+        isPast
+        transactionId
+        amount
+        amountDiff
+        category {
+            id
+            name
+            __typename
+        }
+        account {
+            id
+            displayName
+            logoUrl
+            __typename
+        }
+        __typename
+    }
+}
+"""
+
+
 @mcp.tool()
 def get_recurring_transactions(
     start_date: Optional[str] = None,
@@ -1363,58 +1517,121 @@ def get_recurring_transactions(
     """
     Get upcoming recurring transactions.
 
-    Returns scheduled recurring transactions with their merchants, amounts, and accounts.
+    Returns scheduled recurring transactions with their merchants, amounts,
+    accounts, and stream details. Each item represents a single occurrence
+    of a recurring transaction within the date range.
+
+    The 'date' field indicates when the recurring transaction is expected.
+    For monthly items, the day-of-month from 'date' represents the typical
+    payment/billing day.
 
     Args:
         start_date: Start date in YYYY-MM-DD format (defaults to start of current month)
         end_date: End date in YYYY-MM-DD format (defaults to end of current month)
 
     Returns:
-        List of upcoming recurring transactions.
+        List of upcoming recurring transactions with account IDs, category IDs,
+        and enriched stream details.
     """
     try:
+        from datetime import datetime
+
+        from gql import gql
 
         async def _get_recurring():
             client = await get_monarch_client()
 
-            filters = {}
-            if start_date:
-                filters["start_date"] = start_date
-            if end_date:
-                filters["end_date"] = end_date
+            # Build date range
+            if start_date and end_date:
+                s_date, e_date = start_date, end_date
+            elif not start_date and not end_date:
+                now = datetime.now()
+                s_date = now.strftime("%Y-%m-01")
+                e_date = now.strftime("%Y-%m-28")
+            else:
+                # Library requires both or neither
+                return await client.get_recurring_transactions(
+                    start_date=start_date, end_date=end_date
+                )
 
-            return await client.get_recurring_transactions(**filters)
+            # Try enriched custom query first
+            try:
+                query = gql(GET_RECURRING_TRANSACTIONS_ENRICHED_QUERY)
+                result = await client.gql_call(
+                    operation="Web_GetUpcomingRecurringTransactionItems",
+                    graphql_query=query,
+                    variables={
+                        "startDate": s_date,
+                        "endDate": e_date,
+                        "filters": {},
+                    },
+                )
+                return result, True
+            except Exception as e:
+                logger.warning(
+                    f"Custom recurring query failed, falling back to library: {e}"
+                )
+                filters = {}
+                if start_date:
+                    filters["start_date"] = start_date
+                if end_date:
+                    filters["end_date"] = end_date
+                result = await client.get_recurring_transactions(**filters)
+                return result, False
 
-        result = run_async(_get_recurring())
+        result, has_enriched_fields = run_async(_get_recurring())
 
         # Format recurring transactions
         recurring_list = []
         for item in result.get("recurringTransactionItems", []):
+            stream = item.get("stream") or {}
+            merchant = stream.get("merchant") or {}
+            account = item.get("account") or {}
+            category = item.get("category") or {}
+
+            stream_info = {
+                "id": stream.get("id"),
+                "frequency": stream.get("frequency"),
+                "amount": stream.get("amount"),
+                "is_approximate": stream.get("isApproximate", False),
+                "merchant": {
+                    "id": merchant.get("id"),
+                    "name": merchant.get("name"),
+                }
+                if merchant
+                else None,
+            }
+
+            # Add enriched stream fields when available
+            if has_enriched_fields:
+                stream_info["is_active"] = stream.get("isActive")
+                stream_info["name"] = stream.get("name")
+                stream_info["logo_url"] = stream.get("logoUrl")
+
             recurring_info = {
                 "date": item.get("date"),
                 "amount": item.get("amount"),
                 "is_past": item.get("isPast", False),
                 "transaction_id": item.get("transactionId"),
-                "stream": {
-                    "id": item.get("stream", {}).get("id"),
-                    "frequency": item.get("stream", {}).get("frequency"),
-                    "amount": item.get("stream", {}).get("amount"),
-                    "is_approximate": item.get("stream", {}).get(
-                        "isApproximate", False
-                    ),
-                    "merchant": item.get("stream", {}).get("merchant", {}).get("name")
-                    if item.get("stream", {}).get("merchant")
-                    else None,
+                "stream": stream_info if stream else None,
+                "category": {
+                    "id": category.get("id"),
+                    "name": category.get("name"),
                 }
-                if item.get("stream")
+                if category
                 else None,
-                "category": item.get("category", {}).get("name")
-                if item.get("category")
-                else None,
-                "account": item.get("account", {}).get("displayName")
-                if item.get("account")
+                "account": {
+                    "id": account.get("id"),
+                    "name": account.get("displayName"),
+                }
+                if account
                 else None,
             }
+
+            # Add amount_diff when available (enriched query only)
+            if has_enriched_fields:
+                recurring_info["amount_diff"] = item.get("amountDiff")
+
             recurring_list.append(recurring_info)
 
         return json.dumps(recurring_list, indent=2, default=str)

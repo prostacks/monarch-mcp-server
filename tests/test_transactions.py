@@ -594,25 +594,38 @@ class TestGetRecurringTransactions:
     """Tests for get_recurring_transactions tool."""
 
     @patch("monarch_mcp_server.server.get_monarch_client")
-    def test_get_recurring_success(self, mock_get_client):
-        """Test successful retrieval of recurring transactions."""
+    def test_get_recurring_enriched_success(self, mock_get_client):
+        """Test successful retrieval with enriched custom query."""
         mock_client = AsyncMock()
-        mock_client.get_recurring_transactions.return_value = {
+        # Custom gql_call returns enriched data
+        mock_client.gql_call.return_value = {
             "recurringTransactionItems": [
                 {
                     "date": "2024-02-01",
                     "amount": -15.99,
                     "isPast": False,
                     "transactionId": None,
+                    "amountDiff": 2.50,
                     "stream": {
                         "id": "stream_1",
                         "frequency": "monthly",
                         "amount": -15.99,
                         "isApproximate": False,
-                        "merchant": {"name": "Netflix"},
+                        "isActive": True,
+                        "name": "Netflix",
+                        "logoUrl": "https://example.com/netflix.png",
+                        "merchant": {
+                            "id": "merch_1",
+                            "name": "Netflix",
+                            "logoUrl": "https://example.com/netflix.png",
+                        },
                     },
-                    "category": {"name": "Entertainment"},
-                    "account": {"displayName": "Credit Card"},
+                    "category": {"id": "cat_1", "name": "Entertainment"},
+                    "account": {
+                        "id": "acct_1",
+                        "displayName": "Credit Card",
+                        "logoUrl": "https://example.com/chase.png",
+                    },
                 }
             ]
         }
@@ -622,24 +635,121 @@ class TestGetRecurringTransactions:
 
         recurring = json.loads(result)
         assert len(recurring) == 1
-        assert recurring[0]["amount"] == -15.99
-        assert recurring[0]["stream"]["merchant"] == "Netflix"
-        assert recurring[0]["stream"]["frequency"] == "monthly"
+        item = recurring[0]
+        assert item["amount"] == -15.99
+        assert item["date"] == "2024-02-01"
+        assert item["amount_diff"] == 2.50
+        # Stream fields
+        assert item["stream"]["merchant"]["name"] == "Netflix"
+        assert item["stream"]["merchant"]["id"] == "merch_1"
+        assert item["stream"]["frequency"] == "monthly"
+        assert item["stream"]["is_active"] is True
+        assert item["stream"]["name"] == "Netflix"
+        assert item["stream"]["logo_url"] == "https://example.com/netflix.png"
+        # Account with ID
+        assert item["account"]["id"] == "acct_1"
+        assert item["account"]["name"] == "Credit Card"
+        # Category with ID
+        assert item["category"]["id"] == "cat_1"
+        assert item["category"]["name"] == "Entertainment"
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_get_recurring_fallback_to_library(self, mock_get_client):
+        """Test fallback to library when custom query fails."""
+        mock_client = AsyncMock()
+        # Custom query fails
+        mock_client.gql_call.side_effect = Exception("Custom query failed")
+        # Library fallback works
+        mock_client.get_recurring_transactions.return_value = {
+            "recurringTransactionItems": [
+                {
+                    "date": "2024-02-15",
+                    "amount": -50.00,
+                    "isPast": False,
+                    "transactionId": "txn_99",
+                    "stream": {
+                        "id": "stream_2",
+                        "frequency": "monthly",
+                        "amount": -50.00,
+                        "isApproximate": True,
+                        "merchant": {"id": "merch_2", "name": "Spotify"},
+                    },
+                    "category": {"id": "cat_2", "name": "Music"},
+                    "account": {
+                        "id": "acct_2",
+                        "displayName": "Checking",
+                    },
+                }
+            ]
+        }
+        mock_get_client.return_value = mock_client
+
+        result = get_recurring_transactions()
+
+        recurring = json.loads(result)
+        assert len(recurring) == 1
+        item = recurring[0]
+        assert item["amount"] == -50.00
+        assert item["stream"]["merchant"]["name"] == "Spotify"
+        assert item["account"]["id"] == "acct_2"
+        assert item["account"]["name"] == "Checking"
+        assert item["category"]["id"] == "cat_2"
+        # Enriched fields should NOT be present in fallback
+        assert "is_active" not in item["stream"]
+        assert "name" not in item["stream"]
+        assert "amount_diff" not in item
 
     @patch("monarch_mcp_server.server.get_monarch_client")
     def test_get_recurring_with_dates(self, mock_get_client):
-        """Test with custom date range."""
+        """Test with custom date range passes variables to custom query."""
         mock_client = AsyncMock()
-        mock_client.get_recurring_transactions.return_value = {
-            "recurringTransactionItems": []
-        }
+        mock_client.gql_call.return_value = {"recurringTransactionItems": []}
         mock_get_client.return_value = mock_client
 
         get_recurring_transactions(start_date="2024-02-01", end_date="2024-02-29")
 
-        call_kwargs = mock_client.get_recurring_transactions.call_args.kwargs
-        assert call_kwargs["start_date"] == "2024-02-01"
-        assert call_kwargs["end_date"] == "2024-02-29"
+        # Custom query should be called with the dates in variables
+        call_kwargs = mock_client.gql_call.call_args.kwargs
+        assert call_kwargs["variables"]["startDate"] == "2024-02-01"
+        assert call_kwargs["variables"]["endDate"] == "2024-02-29"
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_get_recurring_null_account_and_category(self, mock_get_client):
+        """Test items with null account and category."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "recurringTransactionItems": [
+                {
+                    "date": "2024-03-01",
+                    "amount": -9.99,
+                    "isPast": False,
+                    "transactionId": None,
+                    "amountDiff": None,
+                    "stream": {
+                        "id": "stream_3",
+                        "frequency": "monthly",
+                        "amount": -9.99,
+                        "isApproximate": False,
+                        "isActive": True,
+                        "name": "Hulu",
+                        "logoUrl": None,
+                        "merchant": None,
+                    },
+                    "category": None,
+                    "account": None,
+                }
+            ]
+        }
+        mock_get_client.return_value = mock_client
+
+        result = get_recurring_transactions()
+
+        recurring = json.loads(result)
+        assert len(recurring) == 1
+        item = recurring[0]
+        assert item["account"] is None
+        assert item["category"] is None
+        assert item["stream"]["merchant"] is None
 
     @patch("monarch_mcp_server.server.get_monarch_client")
     def test_get_recurring_error(self, mock_get_client):

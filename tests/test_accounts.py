@@ -436,3 +436,222 @@ class TestGetAccountsFallback:
 
         assert result.startswith("Error getting accounts:")
         assert "Network timeout" in result
+
+
+# ---------------------------------------------------------------------------
+# Due day enrichment from recurring transactions
+# ---------------------------------------------------------------------------
+
+
+def _make_recurring_item(account_id, date, is_past=False, amount=-50.0):
+    """Build a mock recurring transaction item for due_day tests."""
+    return {
+        "date": date,
+        "amount": amount,
+        "isPast": is_past,
+        "transactionId": None,
+        "amountDiff": None,
+        "stream": {
+            "id": f"stream_{account_id}",
+            "frequency": "monthly",
+            "amount": amount,
+            "isApproximate": False,
+            "isActive": True,
+            "name": "Test Merchant",
+            "logoUrl": None,
+            "merchant": {"id": "merch_1", "name": "Test Merchant", "logoUrl": None},
+        },
+        "category": {"id": "cat_1", "name": "Bills"},
+        "account": {"id": account_id, "displayName": "Test Account", "logoUrl": None},
+    }
+
+
+def _mock_gql_call(accounts, recurring_items):
+    """Create a side_effect function that returns accounts for the first call
+    and recurring items for the second call (recurring query)."""
+    call_count = {"n": 0}
+
+    async def _side_effect(*args, **kwargs):
+        call_count["n"] += 1
+        operation = kwargs.get("operation", "")
+        if operation == "GetAccountsWithPaymentFields" or call_count["n"] == 1:
+            return {"accounts": accounts}
+        else:
+            return {"recurringTransactionItems": recurring_items}
+
+    return _side_effect
+
+
+class TestGetAccountsDueDay:
+    """Tests for due_day enrichment from recurring transactions."""
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_populated_for_credit_card(self, mock_get_client):
+        """Credit card gets due_day from recurring transaction date."""
+        cc = _make_credit_card()
+        recurring = [_make_recurring_item("acc_cc", "2026-05-15")]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([cc], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 1
+        pd = accounts[0]["payment_details"]
+        assert pd["due_day"] == 15
+        # Other payment fields still present
+        assert pd["minimum_payment"] == 75.0
+        assert pd["apr"] == 25.7
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_populated_for_loan(self, mock_get_client):
+        """Loan gets due_day from recurring transaction date."""
+        loan = _make_loan()
+        recurring = [_make_recurring_item("acc_loan", "2026-05-02")]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([loan], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 1
+        pd = accounts[0]["payment_details"]
+        assert pd["due_day"] == 2
+        assert pd["minimum_payment"] == 520.0
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_no_due_day_for_depository(self, mock_get_client):
+        """Depository accounts don't get due_day even if recurring exists."""
+        chk = _make_checking()
+        # Even with a recurring item for this account, it shouldn't get due_day
+        recurring = [_make_recurring_item("acc_chk", "2026-05-10")]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([chk], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 1
+        assert "payment_details" not in accounts[0]
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_missing_when_no_recurring_match(self, mock_get_client):
+        """Credit card without matching recurring item has no due_day."""
+        cc = _make_credit_card()
+        # Recurring item for a DIFFERENT account
+        recurring = [_make_recurring_item("acc_other", "2026-05-20")]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([cc], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 1
+        pd = accounts[0]["payment_details"]
+        # Has payment fields but no due_day
+        assert pd["minimum_payment"] == 75.0
+        assert "due_day" not in pd
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_mixed_accounts_selective_due_day(self, mock_get_client):
+        """Mixed accounts: only credit/loan get due_day, and only when matched."""
+        chk = _make_checking()
+        cc = _make_credit_card()
+        loan = _make_loan()
+        recurring = [
+            _make_recurring_item("acc_cc", "2026-05-15"),
+            # No recurring for the loan
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([chk, cc, loan], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 3
+        # Checking: no payment_details at all
+        assert "payment_details" not in accounts[0]
+        # Credit card: has due_day
+        assert accounts[1]["payment_details"]["due_day"] == 15
+        # Loan: has payment_details but no due_day
+        assert "due_day" not in accounts[2]["payment_details"]
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_uses_first_item_per_account(self, mock_get_client):
+        """When multiple recurring items exist for same account, uses the first one."""
+        cc = _make_credit_card()
+        recurring = [
+            _make_recurring_item("acc_cc", "2026-04-15"),  # first match
+            _make_recurring_item("acc_cc", "2026-05-15"),  # second match (ignored)
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([cc], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        # Should use first item's date (day 15)
+        assert accounts[0]["payment_details"]["due_day"] == 15
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_graceful_on_recurring_fetch_failure(self, mock_get_client):
+        """If recurring fetch fails, accounts still returned without due_day."""
+        cc = _make_credit_card()
+
+        call_count = {"n": 0}
+
+        async def _failing_recurring(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return {"accounts": [cc]}
+            else:
+                raise Exception("Recurring API error")
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _failing_recurring
+        # Also make the library fallback for recurring fail
+        mock_client.get_recurring_transactions.side_effect = Exception(
+            "Library also failed"
+        )
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        # Account still returned with payment_details, just no due_day
+        assert len(accounts) == 1
+        pd = accounts[0]["payment_details"]
+        assert pd["minimum_payment"] == 75.0
+        assert "due_day" not in pd
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_creates_payment_details_if_missing(self, mock_get_client):
+        """If a credit account has no payment fields but has recurring, payment_details
+        is created with just due_day."""
+        # Credit card with all payment fields as None
+        cc = _make_credit_card(minimum_payment=None, apr=None, limit=None)
+        recurring = [_make_recurring_item("acc_cc", "2026-05-25")]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([cc], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 1
+        # payment_details should exist with just due_day
+        pd = accounts[0]["payment_details"]
+        assert pd == {"due_day": 25}
