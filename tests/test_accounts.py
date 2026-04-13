@@ -443,7 +443,7 @@ class TestGetAccountsFallback:
 # ---------------------------------------------------------------------------
 
 
-def _make_recurring_item(account_id, date, is_past=False, amount=-50.0):
+def _make_recurring_item(account_id, date, is_past=False, amount=-50.0, base_date=None):
     """Build a mock recurring transaction item for due_day tests."""
     return {
         "date": date,
@@ -451,6 +451,9 @@ def _make_recurring_item(account_id, date, is_past=False, amount=-50.0):
         "isPast": is_past,
         "transactionId": None,
         "amountDiff": None,
+        "isLate": False,
+        "isCompleted": False,
+        "markedPaidAt": None,
         "stream": {
             "id": f"stream_{account_id}",
             "frequency": "monthly",
@@ -459,6 +462,9 @@ def _make_recurring_item(account_id, date, is_past=False, amount=-50.0):
             "isActive": True,
             "name": "Test Merchant",
             "logoUrl": None,
+            "baseDate": base_date or date,
+            "reviewStatus": "automatic_approved",
+            "recurringType": "expense",
             "merchant": {"id": "merch_1", "name": "Test Merchant", "logoUrl": None},
         },
         "category": {"id": "cat_1", "name": "Bills"},
@@ -655,3 +661,43 @@ class TestGetAccountsDueDay:
         # payment_details should exist with just due_day
         pd = accounts[0]["payment_details"]
         assert pd == {"due_day": 25}
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_prefers_base_date_over_item_date(self, mock_get_client):
+        """When stream.baseDate differs from item.date, baseDate is used for due_day."""
+        cc = _make_credit_card()
+        # item.date is the 2nd but stream.baseDate is the 8th
+        # (mirrors real Amazon data: item.date=2026-04-02, baseDate=2026-04-08)
+        recurring = [
+            _make_recurring_item("acc_cc", "2026-04-02", base_date="2026-04-08")
+        ]
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([cc], recurring)
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 1
+        # Should use baseDate (day 8), not item.date (day 2)
+        assert accounts[0]["payment_details"]["due_day"] == 8
+
+    @patch("monarch_mcp_server.server.get_monarch_client")
+    def test_due_day_falls_back_to_item_date_when_no_base_date(self, mock_get_client):
+        """When stream.baseDate is null, falls back to item.date for due_day."""
+        cc = _make_credit_card()
+        recurring_item = _make_recurring_item("acc_cc", "2026-05-20")
+        # Simulate missing baseDate (e.g., library fallback)
+        recurring_item["stream"]["baseDate"] = None
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call([cc], [recurring_item])
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
+        assert len(accounts) == 1
+        # Falls back to item.date (day 20)
+        assert accounts[0]["payment_details"]["due_day"] == 20

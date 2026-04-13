@@ -606,6 +606,9 @@ class TestGetRecurringTransactions:
                     "isPast": False,
                     "transactionId": None,
                     "amountDiff": 2.50,
+                    "isLate": False,
+                    "isCompleted": True,
+                    "markedPaidAt": None,
                     "stream": {
                         "id": "stream_1",
                         "frequency": "monthly",
@@ -614,6 +617,9 @@ class TestGetRecurringTransactions:
                         "isActive": True,
                         "name": "Netflix",
                         "logoUrl": "https://example.com/netflix.png",
+                        "baseDate": "2024-01-18",
+                        "reviewStatus": "automatic_approved",
+                        "recurringType": "expense",
                         "merchant": {
                             "id": "merch_1",
                             "name": "Netflix",
@@ -646,6 +652,14 @@ class TestGetRecurringTransactions:
         assert item["stream"]["is_active"] is True
         assert item["stream"]["name"] == "Netflix"
         assert item["stream"]["logo_url"] == "https://example.com/netflix.png"
+        # New enriched stream fields
+        assert item["stream"]["base_date"] == "2024-01-18"
+        assert item["stream"]["review_status"] == "automatic_approved"
+        assert item["stream"]["recurring_type"] == "expense"
+        # New enriched item fields
+        assert item["is_late"] is False
+        assert item["is_completed"] is True
+        assert item["marked_paid_at"] is None
         # Account with ID
         assert item["account"]["id"] == "acct_1"
         assert item["account"]["name"] == "Credit Card"
@@ -697,7 +711,13 @@ class TestGetRecurringTransactions:
         # Enriched fields should NOT be present in fallback
         assert "is_active" not in item["stream"]
         assert "name" not in item["stream"]
+        assert "base_date" not in item["stream"]
+        assert "review_status" not in item["stream"]
+        assert "recurring_type" not in item["stream"]
         assert "amount_diff" not in item
+        assert "is_late" not in item
+        assert "is_completed" not in item
+        assert "marked_paid_at" not in item
 
     @patch("monarch_mcp_server.server.get_monarch_client")
     def test_get_recurring_with_dates(self, mock_get_client):
