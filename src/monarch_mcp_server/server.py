@@ -400,6 +400,245 @@ def get_accounts() -> str:
         return f"Error getting accounts: {str(e)}"
 
 
+# =============================================================================
+# Account management tools (Issue #2)
+# =============================================================================
+
+# Custom update mutation that extends the library's Common_UpdateAccount
+# with payment fields (minimumPayment, interestRate, apr) — confirmed writable
+# via live API probing (April 2026).
+UPDATE_ACCOUNT_WITH_PAYMENT_FIELDS_MUTATION = """
+mutation Common_UpdateAccount($input: UpdateAccountMutationInput!) {
+    updateAccount(input: $input) {
+        account {
+            id
+            displayName
+            currentBalance
+            displayBalance
+            includeInNetWorth
+            hideFromList
+            hideTransactionsFromReports
+            isManual
+            isAsset
+            type {
+                name
+                display
+                group
+                __typename
+            }
+            subtype {
+                name
+                display
+                __typename
+            }
+            minimumPayment
+            interestRate
+            apr
+            limit
+            __typename
+        }
+        errors {
+            fieldErrors {
+                field
+                messages
+                __typename
+            }
+            message
+            code
+            __typename
+        }
+        __typename
+    }
+}
+"""
+
+
+@mcp.tool()
+def create_account(
+    name: str,
+    account_type: str,
+    account_subtype: str,
+    balance: float = 0.0,
+    include_in_net_worth: bool = True,
+) -> str:
+    """
+    Create a new manual account in Monarch Money.
+
+    Only manual accounts can be created via the API. Connected (Plaid/bank-synced)
+    accounts must be added through the Monarch Money web interface.
+
+    Payment details (minimum payment, interest rate, APR) cannot be set at creation
+    time. Use update_account after creation to set those fields.
+
+    Args:
+        name: Display name for the account (e.g. "Ford Credit Auto Loan")
+        account_type: Account type — "loan", "credit", or "depository"
+        account_subtype: Account subtype — e.g. "checking", "savings", "credit_card", "auto", "personal"
+        balance: Starting balance (default 0.0)
+        include_in_net_worth: Whether to include in net worth calculation (default True)
+
+    Returns:
+        Created account details including id, name, type, and balance.
+    """
+    try:
+
+        async def _create_account():
+            client = await get_monarch_client()
+            return await client.create_manual_account(
+                account_type=account_type,
+                account_sub_type=account_subtype,
+                is_in_net_worth=include_in_net_worth,
+                account_name=name,
+                account_balance=balance,
+            )
+
+        result = run_async(_create_account())
+
+        create_result = result.get("createManualAccount", {})
+        errors = create_result.get("errors")
+        if errors:
+            return json.dumps({"success": False, "errors": errors}, indent=2)
+
+        account = create_result.get("account", {})
+        return json.dumps({"success": True, "account": account}, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to create account: {e}")
+        return f"Error creating account: {str(e)}"
+
+
+@mcp.tool()
+def update_account(
+    account_id: str,
+    name: Optional[str] = None,
+    balance: Optional[float] = None,
+    account_type: Optional[str] = None,
+    account_subtype: Optional[str] = None,
+    include_in_net_worth: Optional[bool] = None,
+    hide_from_list: Optional[bool] = None,
+    hide_transactions_from_reports: Optional[bool] = None,
+    minimum_payment: Optional[float] = None,
+    interest_rate: Optional[float] = None,
+    apr: Optional[float] = None,
+) -> str:
+    """
+    Update an existing account in Monarch Money.
+
+    All parameters except account_id are optional — only provided fields
+    are updated. Use get_accounts to find account IDs.
+
+    Args:
+        account_id: The ID of the account to update
+        name: New display name for the account
+        balance: New current balance
+        account_type: Change account type (e.g. "loan", "credit", "depository")
+        account_subtype: Change account subtype (e.g. "checking", "credit_card", "auto")
+        include_in_net_worth: Whether to include in net worth calculation
+        hide_from_list: Hide from the Accounts summary view
+        hide_transactions_from_reports: Exclude from budgets and reports
+        minimum_payment: Minimum payment due (for credit cards and loans)
+        interest_rate: Annual interest rate as a percentage e.g. 5.9 (typically for loans)
+        apr: Annual percentage rate as a percentage e.g. 25.7 (typically for credit cards)
+
+    Returns:
+        Updated account details.
+    """
+    try:
+        from gql import gql
+
+        async def _update_account():
+            client = await get_monarch_client()
+
+            account_input: Dict[str, Any] = {"id": str(account_id)}
+
+            if name is not None:
+                account_input["name"] = name
+            if balance is not None:
+                account_input["displayBalance"] = balance
+            if account_type is not None:
+                account_input["type"] = account_type
+            if account_subtype is not None:
+                account_input["subtype"] = account_subtype
+            if include_in_net_worth is not None:
+                account_input["includeInNetWorth"] = include_in_net_worth
+            if hide_from_list is not None:
+                account_input["hideFromList"] = hide_from_list
+            if hide_transactions_from_reports is not None:
+                account_input["hideTransactionsFromReports"] = (
+                    hide_transactions_from_reports
+                )
+            if minimum_payment is not None:
+                account_input["minimumPayment"] = minimum_payment
+            if interest_rate is not None:
+                account_input["interestRate"] = interest_rate
+            if apr is not None:
+                account_input["apr"] = apr
+
+            query = gql(UPDATE_ACCOUNT_WITH_PAYMENT_FIELDS_MUTATION)
+            return await client.gql_call(
+                operation="Common_UpdateAccount",
+                graphql_query=query,
+                variables={"input": account_input},
+            )
+
+        result = run_async(_update_account())
+
+        update_result = result.get("updateAccount", {})
+        errors = update_result.get("errors")
+        if errors:
+            return json.dumps({"success": False, "errors": errors}, indent=2)
+
+        account = update_result.get("account", {})
+        return json.dumps({"success": True, "account": account}, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to update account: {e}")
+        return f"Error updating account: {str(e)}"
+
+
+@mcp.tool()
+def delete_account(account_id: str) -> str:
+    """
+    Delete an account from Monarch Money.
+
+    WARNING: This permanently removes the account and all its transaction history.
+    This action cannot be undone.
+
+    Args:
+        account_id: The ID of the account to delete (use get_accounts to find IDs)
+
+    Returns:
+        Confirmation of deletion with success boolean.
+    """
+    try:
+
+        async def _delete_account():
+            client = await get_monarch_client()
+            return await client.delete_account(account_id=account_id)
+
+        result = run_async(_delete_account())
+
+        delete_result = result.get("deleteAccount", {})
+        if delete_result.get("deleted"):
+            return json.dumps(
+                {
+                    "success": True,
+                    "message": f"Account {account_id} deleted successfully",
+                },
+                indent=2,
+            )
+
+        errors = delete_result.get("errors")
+        if errors:
+            return json.dumps({"success": False, "errors": errors}, indent=2)
+
+        return json.dumps(
+            {"success": False, "message": "Deletion failed for unknown reason"},
+            indent=2,
+        )
+    except Exception as e:
+        logger.error(f"Failed to delete account: {e}")
+        return f"Error deleting account: {str(e)}"
+
+
 @mcp.tool()
 def get_transactions(
     limit: int = 100,
@@ -597,19 +836,28 @@ def create_transaction(
 def update_transaction(
     transaction_id: str,
     amount: Optional[float] = None,
-    description: Optional[str] = None,
+    merchant_name: Optional[str] = None,
     category_id: Optional[str] = None,
     date: Optional[str] = None,
+    notes: Optional[str] = None,
+    review_status: Optional[str] = None,
+    hide_from_reports: Optional[bool] = None,
 ) -> str:
     """
     Update an existing transaction in Monarch Money.
 
+    Supports updating multiple fields in a single call. All parameters
+    except transaction_id are optional — only provided fields are updated.
+
     Args:
         transaction_id: The ID of the transaction to update
         amount: New transaction amount
-        description: New transaction description
-        category_id: New category ID
+        merchant_name: New merchant/payee name (corrects data provider names)
+        category_id: New category ID (use get_categories for valid IDs)
         date: New transaction date in YYYY-MM-DD format
+        notes: Notes to attach to the transaction
+        review_status: Set to "reviewed" or "needs_review"
+        hide_from_reports: True to hide from budgets/reports, False to include
     """
     try:
 
@@ -620,12 +868,20 @@ def update_transaction(
 
             if amount is not None:
                 update_data["amount"] = amount
-            if description is not None:
-                update_data["description"] = description
+            if merchant_name is not None:
+                update_data["merchant_name"] = merchant_name
             if category_id is not None:
                 update_data["category_id"] = category_id
             if date is not None:
                 update_data["date"] = date
+            if notes is not None:
+                update_data["notes"] = notes
+            if review_status == "reviewed":
+                update_data["needs_review"] = False
+            elif review_status == "needs_review":
+                update_data["needs_review"] = True
+            if hide_from_reports is not None:
+                update_data["hide_from_reports"] = hide_from_reports
 
             return await client.update_transaction(**update_data)
 
