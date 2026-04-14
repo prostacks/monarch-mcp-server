@@ -1,6 +1,13 @@
 # Remote MCP Server Implementation Plan
 
-## Last Updated: 2026-04-10
+## Status: ALL 7 PHASES COMPLETE
+
+Deployed to Railway at `https://monarch-mcp-server-production-b74d.up.railway.app`.
+Connected to Claude.ai as custom connector. All environment variables configured.
+This document is retained as **architectural reference** for the OAuth, admin,
+security, and deployment design.
+
+## Last Updated: 2026-04-13
 
 ## Overview
 

@@ -1,20 +1,9 @@
 """Tests for account management MCP tools (Issue #2): create_account, update_account, delete_account."""
 
 import json
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Mock the monarchmoney module before importing server
-import sys
-
-sys.modules["monarchmoney"] = MagicMock()
-sys.modules["monarchmoney"].MonarchMoney = MagicMock
-sys.modules["monarchmoney"].MonarchMoneyEndpoints = MagicMock()
-sys.modules["monarchmoney"].RequireMFAException = type(
-    "RequireMFAException", (Exception,), {}
-)
-
-from monarch_mcp_server.server import (
+from monarch_mcp_server.tools.accounts import (
     create_account,
     update_account,
     delete_account,
@@ -29,7 +18,7 @@ from monarch_mcp_server.server import (
 class TestCreateAccount:
     """Tests for create_account tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_create_minimal(self, mock_get_client):
         """Create with only required params passes correct args to library."""
         mock_client = AsyncMock()
@@ -65,7 +54,7 @@ class TestCreateAccount:
         assert call_kwargs["account_balance"] == 0.0
         assert call_kwargs["is_in_net_worth"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_create_all_fields(self, mock_get_client):
         """Create with all optional params passes them through."""
         mock_client = AsyncMock()
@@ -96,7 +85,7 @@ class TestCreateAccount:
         assert call_kwargs["account_balance"] == 500.0
         assert call_kwargs["is_in_net_worth"] is False
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_create_negative_balance(self, mock_get_client):
         """Negative balance (debt) passes through correctly."""
         mock_client = AsyncMock()
@@ -122,7 +111,7 @@ class TestCreateAccount:
         call_kwargs = mock_client.create_manual_account.call_args.kwargs
         assert call_kwargs["account_balance"] == -2500.0
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_create_api_errors(self, mock_get_client):
         """API-level errors return success=False with error details."""
         mock_client = AsyncMock()
@@ -150,7 +139,7 @@ class TestCreateAccount:
         assert parsed["success"] is False
         assert "errors" in parsed
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_create_exception(self, mock_get_client):
         """Exception returns error message string."""
         mock_get_client.side_effect = RuntimeError("Network timeout")
@@ -173,7 +162,7 @@ class TestCreateAccount:
 class TestUpdateAccount:
     """Tests for update_account tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_name_only(self, mock_get_client):
         """Update with only name passes id + name in input."""
         mock_client = AsyncMock()
@@ -199,7 +188,7 @@ class TestUpdateAccount:
         assert "displayBalance" not in account_input
         assert "minimumPayment" not in account_input
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_balance(self, mock_get_client):
         """Update balance passes displayBalance in input."""
         mock_client = AsyncMock()
@@ -217,7 +206,7 @@ class TestUpdateAccount:
         account_input = call_kwargs["variables"]["input"]
         assert account_input["displayBalance"] == 5000.0
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_include_in_net_worth_true(self, mock_get_client):
         """include_in_net_worth=True is forwarded."""
         mock_client = AsyncMock()
@@ -235,7 +224,7 @@ class TestUpdateAccount:
         account_input = call_kwargs["variables"]["input"]
         assert account_input["includeInNetWorth"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_include_in_net_worth_false(self, mock_get_client):
         """include_in_net_worth=False is forwarded (not dropped by truthiness)."""
         mock_client = AsyncMock()
@@ -253,7 +242,7 @@ class TestUpdateAccount:
         account_input = call_kwargs["variables"]["input"]
         assert account_input["includeInNetWorth"] is False
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_minimum_payment(self, mock_get_client):
         """minimum_payment maps to minimumPayment in input."""
         mock_client = AsyncMock()
@@ -271,7 +260,7 @@ class TestUpdateAccount:
         account_input = call_kwargs["variables"]["input"]
         assert account_input["minimumPayment"] == 75.0
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_interest_rate(self, mock_get_client):
         """interest_rate maps to interestRate in input."""
         mock_client = AsyncMock()
@@ -289,7 +278,7 @@ class TestUpdateAccount:
         account_input = call_kwargs["variables"]["input"]
         assert account_input["interestRate"] == 5.9
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_apr(self, mock_get_client):
         """apr maps to apr in input."""
         mock_client = AsyncMock()
@@ -307,7 +296,7 @@ class TestUpdateAccount:
         account_input = call_kwargs["variables"]["input"]
         assert account_input["apr"] == 25.7
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_all_fields(self, mock_get_client):
         """All fields present in input when all params provided."""
         mock_client = AsyncMock()
@@ -348,7 +337,7 @@ class TestUpdateAccount:
         # interest_rate was None, should not appear
         assert "interestRate" not in account_input
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_api_errors(self, mock_get_client):
         """API-level errors return success=False."""
         mock_client = AsyncMock()
@@ -366,7 +355,7 @@ class TestUpdateAccount:
         assert parsed["success"] is False
         assert "errors" in parsed
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_update_exception(self, mock_get_client):
         """Exception returns error message string."""
         mock_get_client.side_effect = RuntimeError("Connection refused")
@@ -385,7 +374,7 @@ class TestUpdateAccount:
 class TestDeleteAccount:
     """Tests for delete_account tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_delete_success(self, mock_get_client):
         """Successful deletion returns success=True."""
         mock_client = AsyncMock()
@@ -405,7 +394,7 @@ class TestDeleteAccount:
 
         mock_client.delete_account.assert_called_once_with(account_id="acc_1")
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_delete_api_error(self, mock_get_client):
         """API errors return success=False with error details."""
         mock_client = AsyncMock()
@@ -426,7 +415,7 @@ class TestDeleteAccount:
         assert parsed["success"] is False
         assert "errors" in parsed
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_delete_unknown_failure(self, mock_get_client):
         """Empty/unexpected response returns success=False with unknown error."""
         mock_client = AsyncMock()
@@ -444,7 +433,7 @@ class TestDeleteAccount:
         assert parsed["success"] is False
         assert "unknown" in parsed["message"].lower()
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_delete_exception(self, mock_get_client):
         """Exception returns error message string."""
         mock_get_client.side_effect = RuntimeError("Server error")

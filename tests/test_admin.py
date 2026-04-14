@@ -1,19 +1,11 @@
 """Tests for admin routes (Phase 4): /admin/status and /admin/reauth."""
 
 import os
+import sys
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-# Mock monarchmoney before importing admin module
-import sys
-
-sys.modules["monarchmoney"] = MagicMock()
-sys.modules["monarchmoney"].MonarchMoney = MagicMock
-sys.modules["monarchmoney"].RequireMFAException = type(
-    "RequireMFAException", (Exception,), {}
-)
 
 from monarch_mcp_server.admin import (
     _admin_sessions,
@@ -302,24 +294,20 @@ class TestReauthMonarchLogin:
         mock_mm = MagicMock()
         mock_mm.login = AsyncMock(side_effect=Exception("Invalid credentials"))
 
-        # Ensure RequireMFAException is NOT base Exception (test_transactions.py
-        # may have set it to Exception, which would catch all exceptions)
-        _custom_mfa_exc = type("RequireMFAException", (Exception,), {})
         with patch.dict(os.environ, {"MCP_AUTH_PASSWORD": TEST_PASSWORD}):
             with patch("monarchmoney.MonarchMoney", return_value=mock_mm):
-                with patch("monarchmoney.RequireMFAException", _custom_mfa_exc):
-                    request = _make_request(
-                        {
-                            "step": "monarch_login",
-                            "admin_token": admin_token,
-                            "email": "user@example.com",
-                            "password": "wrong-pass",
-                        }
-                    )
-                    response = await handle_reauth_post(request)
-                    assert response.status_code == 401
-                    body = response.body.decode()
-                    assert "Invalid credentials" in body
+                request = _make_request(
+                    {
+                        "step": "monarch_login",
+                        "admin_token": admin_token,
+                        "email": "user@example.com",
+                        "password": "wrong-pass",
+                    }
+                )
+                response = await handle_reauth_post(request)
+                assert response.status_code == 401
+                body = response.body.decode()
+                assert "Invalid credentials" in body
 
 
 # ---------------------------------------------------------------------------

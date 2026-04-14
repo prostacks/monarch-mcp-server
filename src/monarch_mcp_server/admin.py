@@ -143,6 +143,15 @@ _BASE_STYLES = """
     .nav a:hover {
         text-decoration: underline;
     }
+    .warning {
+        background: rgba(255, 193, 7, 0.1);
+        border: 1px solid rgba(255, 193, 7, 0.3);
+        border-radius: 8px;
+        padding: 0.75rem;
+        margin-bottom: 1.5rem;
+        font-size: 0.85rem;
+        color: #ffc107;
+    }
 """
 
 

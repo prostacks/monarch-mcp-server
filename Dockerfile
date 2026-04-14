@@ -43,7 +43,7 @@ ENV PORT=8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:${PORT}/.well-known/oauth-authorization-server')" || exit 1
 
-EXPOSE ${PORT}
+EXPOSE 8000
 
 # Run the MCP server in streamable-http mode
 # Railway sets PORT env var; --port defaults to $PORT

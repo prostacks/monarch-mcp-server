@@ -1,20 +1,9 @@
 """Tests for get_accounts MCP tool with enriched fields and payment details."""
 
 import json
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Mock the monarchmoney module before importing server
-import sys
-
-sys.modules["monarchmoney"] = MagicMock()
-sys.modules["monarchmoney"].MonarchMoney = MagicMock
-sys.modules["monarchmoney"].MonarchMoneyEndpoints = MagicMock()
-sys.modules["monarchmoney"].RequireMFAException = type(
-    "RequireMFAException", (Exception,), {}
-)
-
-from monarch_mcp_server.server import get_accounts
+from monarch_mcp_server.tools.accounts import get_accounts
 
 
 # ---------------------------------------------------------------------------
@@ -192,7 +181,7 @@ def _make_checking(**overrides):
 class TestGetAccountsEnrichedFields:
     """Tests for the enriched fields in get_accounts output."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_get_accounts_enriched_fields(self, mock_get_client):
         """Enriched response includes all new fields (subtype, is_asset, logo_url, etc.)."""
         mock_client = AsyncMock()
@@ -228,7 +217,7 @@ class TestGetAccountsEnrichedFields:
         assert acct["last_updated"] == "2026-04-10T12:00:00Z"
         assert acct["institution_url"] == "https://chase.com"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_get_accounts_handles_missing_optional_fields(self, mock_get_client):
         """Graceful handling when optional fields are None or missing."""
         account = _make_account(
@@ -263,7 +252,7 @@ class TestGetAccountsEnrichedFields:
 class TestGetAccountsPaymentDetails:
     """Tests for payment_details on credit/loan accounts."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_credit_card_payment_details(self, mock_get_client):
         """Credit card accounts include payment_details with minimum_payment, apr, credit_limit."""
         mock_client = AsyncMock()
@@ -284,7 +273,7 @@ class TestGetAccountsPaymentDetails:
         # interest_rate is None for credit cards, so should NOT be in payment_details
         assert "interest_rate" not in pd
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_loan_payment_details(self, mock_get_client):
         """Loan accounts include payment_details with minimum_payment and interest_rate."""
         mock_client = AsyncMock()
@@ -305,7 +294,7 @@ class TestGetAccountsPaymentDetails:
         assert "apr" not in pd
         assert "credit_limit" not in pd
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_depository_no_payment_details(self, mock_get_client):
         """Depository accounts (checking/savings) do NOT get a payment_details key."""
         mock_client = AsyncMock()
@@ -318,7 +307,7 @@ class TestGetAccountsPaymentDetails:
         assert len(accounts) == 1
         assert "payment_details" not in accounts[0]
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_mixed_account_types(self, mock_get_client):
         """Mixed response: depository, credit, and loan accounts handled correctly."""
         mock_client = AsyncMock()
@@ -360,7 +349,7 @@ class TestGetAccountsPaymentDetails:
 class TestGetAccountsFallback:
     """Tests for fallback behavior when custom query fails."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_fallback_to_library_on_custom_query_failure(self, mock_get_client):
         """If custom GraphQL query fails, falls back to library's get_accounts()."""
         mock_client = AsyncMock()
@@ -412,7 +401,7 @@ class TestGetAccountsFallback:
         # No payment_details since fallback doesn't have payment fields
         assert "payment_details" not in acct
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_empty_accounts_list(self, mock_get_client):
         """Edge case: API returns zero accounts."""
         mock_client = AsyncMock()
@@ -424,7 +413,7 @@ class TestGetAccountsFallback:
 
         assert accounts == []
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_error_handling_both_paths_fail(self, mock_get_client):
         """If both custom query and library fallback fail, returns error message."""
         mock_client = AsyncMock()
@@ -491,7 +480,7 @@ def _mock_gql_call(accounts, recurring_items):
 class TestGetAccountsDueDay:
     """Tests for due_day enrichment from recurring transactions."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_populated_for_credit_card(self, mock_get_client):
         """Credit card gets due_day from recurring transaction date."""
         cc = _make_credit_card()
@@ -511,7 +500,7 @@ class TestGetAccountsDueDay:
         assert pd["minimum_payment"] == 75.0
         assert pd["apr"] == 25.7
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_populated_for_loan(self, mock_get_client):
         """Loan gets due_day from recurring transaction date."""
         loan = _make_loan()
@@ -529,7 +518,7 @@ class TestGetAccountsDueDay:
         assert pd["due_day"] == 2
         assert pd["minimum_payment"] == 520.0
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_no_due_day_for_depository(self, mock_get_client):
         """Depository accounts don't get due_day even if recurring exists."""
         chk = _make_checking()
@@ -546,7 +535,7 @@ class TestGetAccountsDueDay:
         assert len(accounts) == 1
         assert "payment_details" not in accounts[0]
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_missing_when_no_recurring_match(self, mock_get_client):
         """Credit card without matching recurring item has no due_day."""
         cc = _make_credit_card()
@@ -566,7 +555,7 @@ class TestGetAccountsDueDay:
         assert pd["minimum_payment"] == 75.0
         assert "due_day" not in pd
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_mixed_accounts_selective_due_day(self, mock_get_client):
         """Mixed accounts: only credit/loan get due_day, and only when matched."""
         chk = _make_checking()
@@ -592,7 +581,7 @@ class TestGetAccountsDueDay:
         # Loan: has payment_details but no due_day
         assert "due_day" not in accounts[2]["payment_details"]
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_uses_first_item_per_account(self, mock_get_client):
         """When multiple recurring items exist for same account, uses the first one."""
         cc = _make_credit_card()
@@ -611,7 +600,7 @@ class TestGetAccountsDueDay:
         # Should use first item's date (day 15)
         assert accounts[0]["payment_details"]["due_day"] == 15
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_graceful_on_recurring_fetch_failure(self, mock_get_client):
         """If recurring fetch fails, accounts still returned without due_day."""
         cc = _make_credit_card()
@@ -642,7 +631,7 @@ class TestGetAccountsDueDay:
         assert pd["minimum_payment"] == 75.0
         assert "due_day" not in pd
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_creates_payment_details_if_missing(self, mock_get_client):
         """If a credit account has no payment fields but has recurring, payment_details
         is created with just due_day."""
@@ -662,7 +651,7 @@ class TestGetAccountsDueDay:
         pd = accounts[0]["payment_details"]
         assert pd == {"due_day": 25}
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_prefers_base_date_over_item_date(self, mock_get_client):
         """When stream.baseDate differs from item.date, baseDate is used for due_day."""
         cc = _make_credit_card()
@@ -683,7 +672,7 @@ class TestGetAccountsDueDay:
         # Should use baseDate (day 8), not item.date (day 2)
         assert accounts[0]["payment_details"]["due_day"] == 8
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
     def test_due_day_falls_back_to_item_date_when_no_base_date(self, mock_get_client):
         """When stream.baseDate is null, falls back to item.date for due_day."""
         cc = _make_credit_card()

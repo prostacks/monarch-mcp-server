@@ -1,125 +1,108 @@
 # Implementation Status
 
-## Last Updated: 2026-02-07
+## Last Updated: 2026-04-13
 
-## Current Phase: ALL PHASES COMPLETE ✅
+## Current Phase: Codebase Refactor + Feature Fixes
+
+See `REFACTOR_PLAN.md` for the detailed execution plan.
 
 ## Summary
-- **Total New Tools Added:** 19
-- **Total Tests:** 57 (all passing)
-- **Commits:** 10
+- **Total Tools:** ~30
+- **Total Tests:** 147 (all passing)
+- **Deployment:** Railway (streamable-http), connected to Claude.ai as custom connector
 
-## Completed Tools
+---
 
-### Phase 1: Core Transaction Review ✅
-| Tool | Status | Description |
-|------|--------|-------------|
-| `get_categories` | ✅ Complete | List all categories with groups, icons |
-| `get_category_groups` | ✅ Complete | List category groups with categories |
-| `get_transactions_needing_review` | ✅ Complete | Filter by needs_review, days, uncategorized, no notes |
-| `set_transaction_category` | ✅ Complete | Set category with optional mark reviewed |
-| `update_transaction_notes` | ✅ Complete | Add notes with receipt URL format |
-| `mark_transaction_reviewed` | ✅ Complete | Clear needs_review flag |
+## Completed Work
 
-### Phase 2: Bulk Operations & Tags ✅
-| Tool | Status | Description |
-|------|--------|-------------|
-| `bulk_categorize_transactions` | ✅ Complete | Apply category to multiple transactions |
-| `get_tags` | ✅ Complete | List all tags with colors and counts |
-| `set_transaction_tags` | ✅ Complete | Apply tags to transaction |
-| `create_tag` | ✅ Complete | Create new tag with name and color |
-| `search_transactions` | ✅ Complete | Full filtering (search, categories, accounts, tags, etc.) |
-| `get_transaction_details` | ✅ Complete | Get comprehensive single transaction info |
-| `delete_transaction` | ✅ Complete | Remove a transaction |
-| `get_recurring_transactions` | ✅ Complete | View upcoming recurring transactions |
+### Original Tool Development (Phases 1-3)
+19 tools built in the initial development phase:
 
-### Phase 3: Transaction Rules (Reverse-Engineered) ✅
-| Tool | Status | Description |
-|------|--------|-------------|
-| `get_transaction_rules` | ✅ Complete | List all auto-categorization rules |
-| `create_transaction_rule` | ✅ Complete | Create rule with merchant/amount conditions |
-| `update_transaction_rule` | ✅ Complete | Modify existing rule |
-| `delete_transaction_rule` | ✅ Complete | Remove a rule |
+| Phase | Tools | Tests |
+|-------|-------|-------|
+| Phase 1: Core Review | get_categories, get_category_groups, get_transactions_needing_review, set_transaction_category, update_transaction_notes, mark_transaction_reviewed | 6 + 30 |
+| Phase 2: Bulk Ops & Tags | bulk_categorize, get_tags, set_transaction_tags, create_tag, search_transactions, get_transaction_details, delete_transaction, get_recurring_transactions | 9 |
+| Phase 3: Transaction Rules | get_transaction_rules, create_transaction_rule, update_transaction_rule, delete_transaction_rule | 12 |
 
-### Authentication ✅
-| Tool | Status | Description |
-|------|--------|-------------|
-| `authenticate_with_google` | ✅ Complete | Browser-based Google OAuth, auto-captures token |
+### Remote MCP Server Conversion (REMOTE_MCP_PLAN.md Phases 1-7) -- COMPLETE
+Converted from local stdio-based server to remote Streamable HTTP server on Railway:
 
-## Commits Made
-| # | Commit | Description |
-|---|--------|-------------|
-| 1 | 8c28102 | Add get_categories and get_category_groups tools |
-| 2 | 8aeb5cc | Add get_transactions_needing_review tool |
-| 3 | b8e37d8 | Add set_transaction_category, update_transaction_notes, mark_transaction_reviewed |
-| 4 | 1c728bb | Add bulk_categorize_transactions tool |
-| 5 | 2a17bbe | Add tag tools: get_tags, set_transaction_tags, create_tag |
-| 6 | f94332e | Add search_transactions, get_transaction_details, delete_transaction, get_recurring_transactions |
-| 7 | 1d8b3d2 | Update STATUS.md with implementation progress |
-| 8 | c08e531 | Add transaction rules API tools (reverse-engineered) |
-| 9 | 3773016 | Add Google OAuth login support (google_login.py) |
-| 10 | 48c6935 | Add authenticate_with_google MCP tool |
+| Phase | Description | Status |
+|-------|-------------|--------|
+| Phase 1 | Transport + Dual Mode (stdio/streamable-http) | Complete |
+| Phase 2 | Monarch Token Storage (in-memory > env var > keyring) | Complete |
+| Phase 3 | Built-in OAuth 2.1 Authorization Server | Complete |
+| Phase 4 | Monarch Re-auth Admin Page (/admin/status, /admin/reauth) | Complete |
+| Phase 5 | Deployment (Railway, Dockerfile) | Complete |
+| Phase 6 | Security Hardening (rate limiting, Origin validation, logging) | Complete |
+| Phase 7 | Connect to Claude.ai as custom connector | Complete |
 
-## Test Coverage
-- `tests/test_categories.py` - 6 tests
-- `tests/test_tags.py` - 9 tests
-- `tests/test_transactions.py` - 30 tests
-- `tests/test_rules.py` - 12 tests
-- **Total: 57 tests, all passing**
+### Issue #1: Fix & Expand update_transaction (commit 2268dd5) -- COMPLETE
+- Fixed description update bug
+- Added merchant_name, notes, review_status, hide_from_reports parameters
 
-## Files Changed
-- `src/monarch_mcp_server/server.py` - Main server with 18 new tools
-- `tests/test_categories.py` - Category tool tests
-- `tests/test_tags.py` - Tag tool tests
-- `tests/test_transactions.py` - Transaction tool tests
-- `tests/test_rules.py` - Rules tool tests
-- `CLAUDE.md` - Development guide
-- `STATUS.md` - This file
+### Issue #2: Add Account Lifecycle Tools (commit 2268dd5) -- COMPLETE
+- create_account: Create manual accounts
+- update_account: Update with payment fields (minimumPayment, interestRate, apr)
+- delete_account: Delete accounts
 
-## Ready for PR
-All tools implemented and tested. Consider splitting into multiple PRs:
+### Enriched get_accounts with Payment Fields (commit 1dff744) -- COMPLETE
+Custom GraphQL query adds minimumPayment, apr, interestRate, limit fields for credit/loan accounts.
 
-1. **PR #1: Core Review Workflow**
-   - get_categories, get_category_groups
-   - get_transactions_needing_review
-   - set_transaction_category, update_transaction_notes, mark_transaction_reviewed
+### Payment Due Date Visibility Feature -- READ + WRITE SIDES COMPLETE
 
-2. **PR #2: Bulk Operations & Tags**
-   - bulk_categorize_transactions
-   - get_tags, set_transaction_tags, create_tag
+**Commit 66de23c:**
+- Probed live API for undocumented stream fields
+- Enriched get_recurring_transactions with custom GraphQL, account.id, category.id, merchant.id
+- Added due_day to get_accounts payment_details from recurring transactions
 
-3. **PR #3: Advanced Search & Management**
-   - search_transactions, get_transaction_details
-   - delete_transaction, get_recurring_transactions
+**Commit 853efeb:**
+- Upgraded due_day source from item.date to stream.baseDate (authoritative)
+- Added 3 new tools: get_merchant_details, update_recurring_transaction, disable_recurring_transaction
+- Enriched recurring query with baseDate, reviewStatus, recurringType, isLate, isCompleted, markedPaidAt
+- All fields validated against live API
+- 147 tests passing (19 new)
 
-4. **PR #4: Transaction Rules (Experimental)**
-   - get_transaction_rules
-   - create_transaction_rule, update_transaction_rule, delete_transaction_rule
-   - Note: Uses reverse-engineered API
+---
 
-## Usage Examples
+## Current Work: Codebase Refactor + Feature Fixes
 
-### Review and categorize transactions
-```
-1. get_transactions_needing_review(needs_review=True, days=7)
-2. get_categories()  # See available categories
-3. set_transaction_category(transaction_id="...", category_id="...")
-```
+### Phase A: Cleanup (see REFACTOR_PLAN.md) -- COMPLETE
+7 cleanup steps to improve code quality after multiple rounds of feature additions:
+- A1 [x]: Create tests/conftest.py with shared mock setup
+- A2 [x]: Remove unnecessary asyncio dependency
+- A3 [x]: Fix Dockerfile EXPOSE
+- A4 [x]: Remove dead code from server.py
+- A5 [x]: Combine dual run_async in get_accounts
+- A6 [x]: Extract duplicate HTML to admin.py templates
+- A7 [x]: Split server.py into modular files (queries.py, remote.py, tools/)
 
-### Create auto-categorization rule
-```
-create_transaction_rule(
-    merchant_criteria_operator="contains",
-    merchant_criteria_value="amazon",
-    set_category_id="cat_shopping",
-    add_tag_ids=["tag_online"]
-)
-```
+### Phase B: Feature Fixes (see REFACTOR_PLAN.md)
+3 fixes from gap analysis of a real Claude conversation failure:
+- B1: Add recurring_merchant_id/recurring_stream_id to get_accounts payment_details
+- B2: Add get_recurring_streams tool (stream-level query, fixes Lending Club gap)
+- B3: Enable creating recurring streams on merchants + _get_due_days fallback
 
-### Bulk categorize similar transactions
-```
-bulk_categorize_transactions(
-    transaction_ids=["txn_1", "txn_2", "txn_3"],
-    category_id="cat_groceries"
-)
-```
+---
+
+## Test Files
+| File | Tests | Description |
+|------|-------|-------------|
+| test_accounts.py | 19 | Enriched fields, payment details, due_day enrichment |
+| test_transactions.py | 33 | Recurring transactions, update_transaction, search, review |
+| test_account_management.py | 19 | Create/update/delete account |
+| test_recurring_management.py | 17 | get_merchant_details, update/disable recurring |
+| test_admin.py | 21 | Admin auth, status, reauth flows |
+| test_categories.py | 6 | Category and category group tools |
+| test_rules.py | 12 | Transaction rule CRUD |
+| test_tags.py | 9 | Tag tools |
+| **Total** | **147** | **All passing** |
+
+## Commit History (Recent)
+| Commit | Description |
+|--------|-------------|
+| 853efeb | Due date write tools + enriched stream fields (latest, on origin main) |
+| 66de23c | Due date read-side: enriched recurring + due_day in get_accounts |
+| 1dff744 | Enriched get_accounts with payment fields |
+| 2268dd5 | Issue #1 + #2: update_transaction fix, account lifecycle tools |
+| (earlier) | Remote MCP server phases 1-7, original tool development |

@@ -2,20 +2,9 @@
 get_merchant_details, update_recurring_transaction, disable_recurring_transaction."""
 
 import json
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Mock the monarchmoney module before importing server
-import sys
-
-sys.modules["monarchmoney"] = MagicMock()
-sys.modules["monarchmoney"].MonarchMoney = MagicMock
-sys.modules["monarchmoney"].MonarchMoneyEndpoints = MagicMock()
-sys.modules["monarchmoney"].RequireMFAException = type(
-    "RequireMFAException", (Exception,), {}
-)
-
-from monarch_mcp_server.server import (
+from monarch_mcp_server.tools.recurring import (
     get_merchant_details,
     update_recurring_transaction,
     disable_recurring_transaction,
@@ -110,7 +99,7 @@ def _make_update_response(
 class TestGetMerchantDetails:
     """Tests for get_merchant_details tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_success_with_stream(self, mock_get_client):
         """Returns merchant info and recurring stream details."""
         mock_client = AsyncMock()
@@ -135,7 +124,7 @@ class TestGetMerchantDetails:
         assert stream["base_date"] == "2024-03-18"
         assert stream["is_active"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_merchant_without_stream(self, mock_get_client):
         """Merchant with no recurring stream returns null for recurring_stream."""
         mock_client = AsyncMock()
@@ -151,7 +140,7 @@ class TestGetMerchantDetails:
         assert parsed["recurring_stream"] is None
         assert parsed["has_active_recurring_streams"] is False
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_merchant_not_found(self, mock_get_client):
         """Returns error when merchant doesn't exist."""
         mock_client = AsyncMock()
@@ -164,7 +153,7 @@ class TestGetMerchantDetails:
         assert parsed["success"] is False
         assert "not found" in parsed["message"]
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_exception_handling(self, mock_get_client):
         """Exception returns error message string."""
         mock_get_client.side_effect = RuntimeError("Network error")
@@ -183,7 +172,7 @@ class TestGetMerchantDetails:
 class TestUpdateRecurringTransaction:
     """Tests for update_recurring_transaction tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_update_base_date_only(self, mock_get_client):
         """Partial update: only change base_date, other fields preserved."""
         mock_client = AsyncMock()
@@ -211,7 +200,7 @@ class TestUpdateRecurringTransaction:
         assert recurrence["amount"] == -15.99  # preserved
         assert recurrence["isActive"] is True  # preserved
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_update_is_active(self, mock_get_client):
         """Update is_active flag."""
         mock_client = AsyncMock()
@@ -227,7 +216,7 @@ class TestUpdateRecurringTransaction:
         assert parsed["success"] is True
         assert parsed["recurring_stream"]["is_active"] is False
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_update_all_fields(self, mock_get_client):
         """Update all fields at once."""
         mock_client = AsyncMock()
@@ -269,7 +258,7 @@ class TestUpdateRecurringTransaction:
         assert recurrence["amount"] == -22.99
         assert recurrence["isActive"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_merchant_not_found(self, mock_get_client):
         """Returns error when merchant doesn't exist."""
         mock_client = AsyncMock()
@@ -284,7 +273,7 @@ class TestUpdateRecurringTransaction:
         assert parsed["success"] is False
         assert "not found" in parsed["message"]
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_merchant_no_recurring_stream(self, mock_get_client):
         """Returns error when merchant has no recurring stream."""
         mock_client = AsyncMock()
@@ -297,7 +286,7 @@ class TestUpdateRecurringTransaction:
         assert parsed["success"] is False
         assert "no recurring" in parsed["message"].lower()
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_api_errors_returned(self, mock_get_client):
         """API-level errors from mutation are returned."""
         mock_client = AsyncMock()
@@ -323,7 +312,7 @@ class TestUpdateRecurringTransaction:
         assert parsed["success"] is False
         assert "errors" in parsed
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_exception_handling(self, mock_get_client):
         """Exception returns error message string."""
         mock_get_client.side_effect = RuntimeError("Connection refused")
@@ -344,7 +333,7 @@ class TestUpdateRecurringTransaction:
 class TestDisableRecurringTransaction:
     """Tests for disable_recurring_transaction tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_disable_active_stream(self, mock_get_client):
         """Successfully disables an active recurring stream."""
         mock_client = AsyncMock()
@@ -370,7 +359,7 @@ class TestDisableRecurringTransaction:
         assert variables["input"]["recurrence"]["amount"] == -15.99
         assert variables["input"]["recurrence"]["baseDate"] == "2024-03-18"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_already_inactive(self, mock_get_client):
         """Returns success message when stream is already inactive."""
         merchant = _make_merchant()
@@ -387,7 +376,7 @@ class TestDisableRecurringTransaction:
         # Should NOT have made a second (mutation) call
         assert mock_client.gql_call.call_count == 1
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_merchant_not_found(self, mock_get_client):
         """Returns error when merchant doesn't exist."""
         mock_client = AsyncMock()
@@ -400,7 +389,7 @@ class TestDisableRecurringTransaction:
         assert parsed["success"] is False
         assert "not found" in parsed["message"]
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_no_recurring_stream(self, mock_get_client):
         """Returns error when merchant has no recurring stream."""
         mock_client = AsyncMock()
@@ -413,7 +402,7 @@ class TestDisableRecurringTransaction:
         assert parsed["success"] is False
         assert "no recurring" in parsed["message"].lower()
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_api_errors(self, mock_get_client):
         """API errors from mutation are returned."""
         mock_client = AsyncMock()
@@ -434,7 +423,7 @@ class TestDisableRecurringTransaction:
         assert parsed["success"] is False
         assert "errors" in parsed
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_exception_handling(self, mock_get_client):
         """Exception returns error message string."""
         mock_get_client.side_effect = RuntimeError("Timeout")

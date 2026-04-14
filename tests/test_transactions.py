@@ -1,17 +1,9 @@
 """Tests for transaction-related MCP tools."""
 
 import json
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Mock the monarchmoney module before importing server
-import sys
-
-sys.modules["monarchmoney"] = MagicMock()
-sys.modules["monarchmoney"].MonarchMoney = MagicMock
-sys.modules["monarchmoney"].RequireMFAException = Exception
-
-from monarch_mcp_server.server import (
+from monarch_mcp_server.tools.transactions import (
     get_transactions_needing_review,
     set_transaction_category,
     update_transaction_notes,
@@ -20,15 +12,15 @@ from monarch_mcp_server.server import (
     search_transactions,
     get_transaction_details,
     delete_transaction,
-    get_recurring_transactions,
     update_transaction,
 )
+from monarch_mcp_server.tools.recurring import get_recurring_transactions
 
 
 class TestGetTransactionsNeedingReview:
     """Tests for get_transactions_needing_review tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_transactions_needs_review_filter(self, mock_get_client):
         """Test filtering by needs_review flag."""
         mock_client = AsyncMock()
@@ -69,7 +61,7 @@ class TestGetTransactionsNeedingReview:
         assert transactions[0]["id"] == "txn_1"
         assert transactions[0]["needs_review"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_transactions_uncategorized_filter(self, mock_get_client):
         """Test filtering for uncategorized transactions."""
         mock_client = AsyncMock()
@@ -112,7 +104,7 @@ class TestGetTransactionsNeedingReview:
         assert transactions[0]["id"] == "txn_1"
         assert transactions[0]["category"] is None
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_transactions_with_days_filter(self, mock_get_client):
         """Test filtering by days parameter."""
         mock_client = AsyncMock()
@@ -126,7 +118,7 @@ class TestGetTransactionsNeedingReview:
         assert "start_date" in call_kwargs
         assert "end_date" in call_kwargs
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_transactions_full_details(self, mock_get_client):
         """Test that full transaction details are returned."""
         mock_client = AsyncMock()
@@ -170,7 +162,7 @@ class TestGetTransactionsNeedingReview:
         assert len(txn["tags"]) == 1
         assert txn["tags"][0]["name"] == "Online"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_transactions_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("Auth needed")
@@ -180,7 +172,7 @@ class TestGetTransactionsNeedingReview:
         assert "Error getting transactions" in result
         assert "Auth needed" in result
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_transactions_empty(self, mock_get_client):
         """Test when no transactions match criteria."""
         mock_client = AsyncMock()
@@ -196,7 +188,7 @@ class TestGetTransactionsNeedingReview:
 class TestSetTransactionCategory:
     """Tests for set_transaction_category tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_set_category_with_mark_reviewed(self, mock_get_client):
         """Test setting category and marking as reviewed."""
         mock_client = AsyncMock()
@@ -225,7 +217,7 @@ class TestSetTransactionCategory:
         data = json.loads(result)
         assert "updateTransaction" in data
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_set_category_without_mark_reviewed(self, mock_get_client):
         """Test setting category without marking as reviewed."""
         mock_client = AsyncMock()
@@ -240,7 +232,7 @@ class TestSetTransactionCategory:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert "needs_review" not in call_kwargs
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_set_category_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("API error")
@@ -253,7 +245,7 @@ class TestSetTransactionCategory:
 class TestUpdateTransactionNotes:
     """Tests for update_transaction_notes tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_update_notes_simple(self, mock_get_client):
         """Test updating notes without receipt URL."""
         mock_client = AsyncMock()
@@ -267,7 +259,7 @@ class TestUpdateTransactionNotes:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert call_kwargs["notes"] == "Business lunch with client"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_update_notes_with_receipt(self, mock_get_client):
         """Test updating notes with receipt URL."""
         mock_client = AsyncMock()
@@ -286,7 +278,7 @@ class TestUpdateTransactionNotes:
             == "[Receipt: https://drive.google.com/file/abc123] Office supplies"
         )
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_update_notes_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("API error")
@@ -299,7 +291,7 @@ class TestUpdateTransactionNotes:
 class TestMarkTransactionReviewed:
     """Tests for mark_transaction_reviewed tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_mark_reviewed_success(self, mock_get_client):
         """Test marking transaction as reviewed."""
         mock_client = AsyncMock()
@@ -319,7 +311,7 @@ class TestMarkTransactionReviewed:
         data = json.loads(result)
         assert "updateTransaction" in data
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_mark_reviewed_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("API error")
@@ -332,7 +324,7 @@ class TestMarkTransactionReviewed:
 class TestBulkCategorizeTransactions:
     """Tests for bulk_categorize_transactions tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_bulk_categorize_all_success(self, mock_get_client):
         """Test successful bulk categorization of all transactions."""
         mock_client = AsyncMock()
@@ -354,7 +346,7 @@ class TestBulkCategorizeTransactions:
         # Verify update_transaction was called 3 times
         assert mock_client.update_transaction.call_count == 3
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_bulk_categorize_partial_failure(self, mock_get_client):
         """Test bulk categorization with some failures."""
         mock_client = AsyncMock()
@@ -377,7 +369,7 @@ class TestBulkCategorizeTransactions:
         assert len(data["errors"]) == 1
         assert data["errors"][0]["transaction_id"] == "txn_2"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_bulk_categorize_without_mark_reviewed(self, mock_get_client):
         """Test bulk categorization without marking as reviewed."""
         mock_client = AsyncMock()
@@ -391,7 +383,7 @@ class TestBulkCategorizeTransactions:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert "needs_review" not in call_kwargs
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_bulk_categorize_empty_list(self, mock_get_client):
         """Test bulk categorization with empty transaction list."""
         mock_client = AsyncMock()
@@ -404,7 +396,7 @@ class TestBulkCategorizeTransactions:
         assert data["successful"] == 0
         assert data["failed"] == 0
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_bulk_categorize_client_error(self, mock_get_client):
         """Test error when client cannot be obtained."""
         mock_get_client.side_effect = RuntimeError("Auth needed")
@@ -419,7 +411,7 @@ class TestBulkCategorizeTransactions:
 class TestSearchTransactions:
     """Tests for search_transactions tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_search_with_text(self, mock_get_client):
         """Test text search."""
         mock_client = AsyncMock()
@@ -449,7 +441,7 @@ class TestSearchTransactions:
         transactions = json.loads(result)
         assert len(transactions) == 1
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_search_with_multiple_filters(self, mock_get_client):
         """Test search with multiple filters."""
         mock_client = AsyncMock()
@@ -475,7 +467,7 @@ class TestSearchTransactions:
         assert call_kwargs["has_notes"] is False
         assert call_kwargs["is_recurring"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_search_returns_full_details(self, mock_get_client):
         """Test that search returns full transaction details."""
         mock_client = AsyncMock()
@@ -513,7 +505,7 @@ class TestSearchTransactions:
         assert txn["is_recurring"] is False
         assert len(txn["tags"]) == 1
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_search_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("API error")
@@ -526,7 +518,7 @@ class TestSearchTransactions:
 class TestGetTransactionDetails:
     """Tests for get_transaction_details tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_details_success(self, mock_get_client):
         """Test successful retrieval of transaction details."""
         mock_client = AsyncMock()
@@ -551,7 +543,7 @@ class TestGetTransactionDetails:
         data = json.loads(result)
         assert "getTransaction" in data
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_get_details_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("Transaction not found")
@@ -564,7 +556,7 @@ class TestGetTransactionDetails:
 class TestDeleteTransaction:
     """Tests for delete_transaction tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_delete_success(self, mock_get_client):
         """Test successful transaction deletion."""
         mock_client = AsyncMock()
@@ -580,7 +572,7 @@ class TestDeleteTransaction:
         data = json.loads(result)
         assert data["deleteTransaction"]["deleted"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_delete_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("Cannot delete")
@@ -593,7 +585,7 @@ class TestDeleteTransaction:
 class TestGetRecurringTransactions:
     """Tests for get_recurring_transactions tool."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_get_recurring_enriched_success(self, mock_get_client):
         """Test successful retrieval with enriched custom query."""
         mock_client = AsyncMock()
@@ -667,7 +659,7 @@ class TestGetRecurringTransactions:
         assert item["category"]["id"] == "cat_1"
         assert item["category"]["name"] == "Entertainment"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_get_recurring_fallback_to_library(self, mock_get_client):
         """Test fallback to library when custom query fails."""
         mock_client = AsyncMock()
@@ -719,7 +711,7 @@ class TestGetRecurringTransactions:
         assert "is_completed" not in item
         assert "marked_paid_at" not in item
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_get_recurring_with_dates(self, mock_get_client):
         """Test with custom date range passes variables to custom query."""
         mock_client = AsyncMock()
@@ -733,7 +725,7 @@ class TestGetRecurringTransactions:
         assert call_kwargs["variables"]["startDate"] == "2024-02-01"
         assert call_kwargs["variables"]["endDate"] == "2024-02-29"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_get_recurring_null_account_and_category(self, mock_get_client):
         """Test items with null account and category."""
         mock_client = AsyncMock()
@@ -771,7 +763,7 @@ class TestGetRecurringTransactions:
         assert item["category"] is None
         assert item["stream"]["merchant"] is None
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_get_recurring_error(self, mock_get_client):
         """Test error handling."""
         mock_get_client.side_effect = RuntimeError("API error")
@@ -784,7 +776,7 @@ class TestGetRecurringTransactions:
 class TestUpdateTransaction:
     """Tests for update_transaction tool (Issue #1)."""
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_update_merchant_name(self, mock_get_client):
         """merchant_name is forwarded correctly to the library."""
         mock_client = AsyncMock()
@@ -799,7 +791,7 @@ class TestUpdateTransaction:
         assert call_kwargs["merchant_name"] == "Amazon"
         assert "description" not in call_kwargs  # old bug param must not appear
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_update_notes(self, mock_get_client):
         """notes is forwarded correctly to the library."""
         mock_client = AsyncMock()
@@ -813,7 +805,7 @@ class TestUpdateTransaction:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert call_kwargs["notes"] == "Reimbursable expense"
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_review_status_reviewed(self, mock_get_client):
         """review_status='reviewed' maps to needs_review=False."""
         mock_client = AsyncMock()
@@ -827,7 +819,7 @@ class TestUpdateTransaction:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert call_kwargs["needs_review"] is False
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_review_status_needs_review(self, mock_get_client):
         """review_status='needs_review' maps to needs_review=True."""
         mock_client = AsyncMock()
@@ -841,7 +833,7 @@ class TestUpdateTransaction:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert call_kwargs["needs_review"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_review_status_unknown_ignored(self, mock_get_client):
         """Unrecognized review_status values do not set needs_review."""
         mock_client = AsyncMock()
@@ -855,7 +847,7 @@ class TestUpdateTransaction:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert "needs_review" not in call_kwargs
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_hide_from_reports_true(self, mock_get_client):
         """hide_from_reports=True is forwarded."""
         mock_client = AsyncMock()
@@ -869,7 +861,7 @@ class TestUpdateTransaction:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert call_kwargs["hide_from_reports"] is True
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_hide_from_reports_false(self, mock_get_client):
         """hide_from_reports=False is forwarded (not dropped by truthiness check)."""
         mock_client = AsyncMock()
@@ -883,7 +875,7 @@ class TestUpdateTransaction:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert call_kwargs["hide_from_reports"] is False
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_none_params_not_forwarded(self, mock_get_client):
         """When all optional params are None, only transaction_id is passed."""
         mock_client = AsyncMock()
@@ -897,7 +889,7 @@ class TestUpdateTransaction:
         call_kwargs = mock_client.update_transaction.call_args.kwargs
         assert call_kwargs == {"transaction_id": "txn_1"}
 
-    @patch("monarch_mcp_server.server.get_monarch_client")
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
     def test_update_error_handling(self, mock_get_client):
         """Exception returns error message string."""
         mock_get_client.side_effect = RuntimeError("API error")
