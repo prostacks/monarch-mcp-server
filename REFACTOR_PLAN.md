@@ -206,7 +206,7 @@ import monarch_mcp_server.tools.budgets
 These fix gaps discovered during a real Claude conversation where the agent struggled
 to manage recurring transactions for a credit account.
 
-### B1: Add merchant_id to get_accounts payment_details [ ]
+### B1: Add merchant_id to get_accounts payment_details [x]
 
 **Problem:** When `_get_due_days` finds a recurring stream for a credit/loan account,
 the `payment_details` dict only includes `due_day`. The agent has no way to go directly
@@ -237,7 +237,7 @@ calling `get_recurring_transactions` first.
 
 ---
 
-### B2: Add `get_recurring_streams` tool [ ]
+### B2: Add `get_recurring_streams` tool [x]
 
 **Problem:** `get_recurring_transactions` queries `recurringTransactionItems(startDate, endDate)`,
 which only returns items within a date window. Streams without upcoming items (like the
@@ -307,7 +307,7 @@ query Common_GetAllRecurringTransactionItems(
 
 ---
 
-### B3: Enable creating recurring streams on merchants [ ]
+### B3: Enable creating recurring streams on merchants [x]
 
 **Problem:** `update_recurring_transaction` currently fails if a merchant has no existing
 recurring stream (returns error message). But we should be able to create one by setting

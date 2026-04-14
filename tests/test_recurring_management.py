@@ -1,11 +1,13 @@
 """Tests for merchant & recurring transaction management tools:
-get_merchant_details, update_recurring_transaction, disable_recurring_transaction."""
+get_merchant_details, get_recurring_streams, update_recurring_transaction,
+disable_recurring_transaction."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from monarch_mcp_server.tools.recurring import (
     get_merchant_details,
+    get_recurring_streams,
     update_recurring_transaction,
     disable_recurring_transaction,
 )
@@ -165,6 +167,171 @@ class TestGetMerchantDetails:
 
 
 # ---------------------------------------------------------------------------
+# TestGetRecurringStreams
+# ---------------------------------------------------------------------------
+
+
+class TestGetRecurringStreams:
+    """Tests for get_recurring_streams tool."""
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_get_streams_success(self, mock_get_client):
+        """Test successful retrieval of all recurring streams."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "recurringTransactionStreams": [
+                {
+                    "id": "stream_1",
+                    "name": "Netflix",
+                    "frequency": "monthly",
+                    "amount": -15.99,
+                    "baseDate": "2026-04-15",
+                    "isActive": True,
+                    "isApproximate": False,
+                    "logoUrl": "https://logo.com/netflix.png",
+                    "reviewStatus": "automatic_approved",
+                    "recurringType": "expense",
+                    "merchant": {
+                        "id": "merch_1",
+                        "name": "Netflix",
+                        "logoUrl": "https://logo.com/netflix.png",
+                    },
+                    "account": {"id": "acc_1", "displayName": "Chase Sapphire"},
+                    "category": {"id": "cat_1", "name": "Entertainment"},
+                    "nextForecastedTransaction": {
+                        "date": "2026-05-15",
+                        "amount": -15.99,
+                    },
+                },
+                {
+                    "id": "stream_2",
+                    "name": "Lending Club",
+                    "frequency": "monthly",
+                    "amount": -520.0,
+                    "baseDate": "2026-04-02",
+                    "isActive": True,
+                    "isApproximate": False,
+                    "logoUrl": None,
+                    "reviewStatus": "approved",
+                    "recurringType": "expense",
+                    "merchant": {
+                        "id": "merch_2",
+                        "name": "Lending Club",
+                        "logoUrl": None,
+                    },
+                    "account": {"id": "acc_2", "displayName": "Personal Loan"},
+                    "category": {"id": "cat_2", "name": "Loan Payment"},
+                    "nextForecastedTransaction": None,
+                },
+            ]
+        }
+        mock_get_client.return_value = mock_client
+
+        result = get_recurring_streams()
+        streams = json.loads(result)
+
+        assert len(streams) == 2
+
+        # Netflix stream
+        s1 = streams[0]
+        assert s1["id"] == "stream_1"
+        assert s1["name"] == "Netflix"
+        assert s1["frequency"] == "monthly"
+        assert s1["amount"] == -15.99
+        assert s1["base_date"] == "2026-04-15"
+        assert s1["is_active"] is True
+        assert s1["recurring_type"] == "expense"
+        assert s1["merchant"]["id"] == "merch_1"
+        assert s1["account"]["id"] == "acc_1"
+        assert s1["category"]["name"] == "Entertainment"
+        assert s1["next_forecasted_transaction"]["date"] == "2026-05-15"
+        assert s1["next_forecasted_transaction"]["amount"] == -15.99
+
+        # Lending Club stream (no next forecasted transaction)
+        s2 = streams[1]
+        assert s2["id"] == "stream_2"
+        assert s2["name"] == "Lending Club"
+        assert s2["amount"] == -520.0
+        assert s2["merchant"]["id"] == "merch_2"
+        assert s2["account"]["name"] == "Personal Loan"
+        assert s2["next_forecasted_transaction"] is None
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_get_streams_empty(self, mock_get_client):
+        """Test when no streams exist."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {"recurringTransactionStreams": []}
+        mock_get_client.return_value = mock_client
+
+        result = get_recurring_streams()
+        streams = json.loads(result)
+
+        assert streams == []
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_get_streams_null_optional_fields(self, mock_get_client):
+        """Test stream with null merchant, account, category."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {
+            "recurringTransactionStreams": [
+                {
+                    "id": "stream_3",
+                    "name": "Unknown",
+                    "frequency": "monthly",
+                    "amount": -10.0,
+                    "baseDate": "2026-04-01",
+                    "isActive": True,
+                    "isApproximate": True,
+                    "logoUrl": None,
+                    "reviewStatus": None,
+                    "recurringType": "expense",
+                    "merchant": None,
+                    "account": None,
+                    "category": None,
+                    "nextForecastedTransaction": None,
+                },
+            ]
+        }
+        mock_get_client.return_value = mock_client
+
+        result = get_recurring_streams()
+        streams = json.loads(result)
+
+        assert len(streams) == 1
+        s = streams[0]
+        assert s["merchant"] is None
+        assert s["account"] is None
+        assert s["category"] is None
+        assert s["next_forecasted_transaction"] is None
+        assert s["is_approximate"] is True
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_get_streams_passes_filter_variables(self, mock_get_client):
+        """Test that include_liabilities and include_pending are passed correctly."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = {"recurringTransactionStreams": []}
+        mock_get_client.return_value = mock_client
+
+        get_recurring_streams(include_liabilities=False, include_pending=False)
+
+        # Verify the variables passed to gql_call
+        call_kwargs = mock_client.gql_call.call_args[1]
+        assert call_kwargs["variables"]["includeLiabilities"] is False
+        assert call_kwargs["variables"]["includePending"] is False
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_get_streams_error(self, mock_get_client):
+        """Test error handling."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = Exception("API error")
+        mock_get_client.return_value = mock_client
+
+        result = get_recurring_streams()
+
+        assert "Error getting recurring streams" in result
+
+
+# ---------------------------------------------------------------------------
 # TestUpdateRecurringTransaction
 # ---------------------------------------------------------------------------
 
@@ -274,8 +441,8 @@ class TestUpdateRecurringTransaction:
         assert "not found" in parsed["message"]
 
     @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
-    def test_merchant_no_recurring_stream(self, mock_get_client):
-        """Returns error when merchant has no recurring stream."""
+    def test_no_stream_missing_all_required_fields(self, mock_get_client):
+        """No stream + missing frequency/base_date/amount returns error listing all three."""
         mock_client = AsyncMock()
         mock_client.gql_call.return_value = _make_merchant(stream=None)
         mock_get_client.return_value = mock_client
@@ -285,6 +452,105 @@ class TestUpdateRecurringTransaction:
 
         assert parsed["success"] is False
         assert "no recurring" in parsed["message"].lower()
+        assert "frequency" in parsed["message"]
+        assert "base_date" in parsed["message"]
+        assert "amount" in parsed["message"]
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_no_stream_missing_some_required_fields(self, mock_get_client):
+        """No stream + only frequency provided still lists missing base_date and amount."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.return_value = _make_merchant(stream=None)
+        mock_get_client.return_value = mock_client
+
+        result = update_recurring_transaction(
+            merchant_id="merch_1", frequency="monthly"
+        )
+        parsed = json.loads(result)
+
+        assert parsed["success"] is False
+        assert "base_date" in parsed["message"]
+        assert "amount" in parsed["message"]
+        # frequency was provided, so it should NOT be listed as missing
+        assert "frequency" not in parsed["message"].split("provide: ")[1]
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_no_stream_creates_stream_with_required_fields(self, mock_get_client):
+        """No stream + all required fields creates a new stream via mutation."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = [
+            _make_merchant(stream=None),  # GET: no existing stream
+            _make_update_response(
+                name="Netflix",
+                frequency="monthly",
+                amount=-15.99,
+                base_date="2024-01-15",
+                is_active=True,
+            ),
+        ]
+        mock_get_client.return_value = mock_client
+
+        result = update_recurring_transaction(
+            merchant_id="merch_1",
+            frequency="monthly",
+            base_date="2024-01-15",
+            amount=-15.99,
+        )
+        parsed = json.loads(result)
+
+        assert parsed["success"] is True
+        assert parsed["recurring_stream"]["frequency"] == "monthly"
+        assert parsed["recurring_stream"]["base_date"] == "2024-01-15"
+        assert parsed["recurring_stream"]["amount"] == -15.99
+        assert parsed["recurring_stream"]["is_active"] is True
+
+        # Verify mutation variables
+        mutation_call = mock_client.gql_call.call_args_list[1]
+        variables = mutation_call.kwargs["variables"]
+        recurrence = variables["input"]["recurrence"]
+        assert recurrence["isRecurring"] is True
+        assert recurrence["frequency"] == "monthly"
+        assert recurrence["baseDate"] == "2024-01-15"
+        assert recurrence["amount"] == -15.99
+        assert recurrence["isActive"] is True
+        # Name preserved from merchant when not explicitly provided
+        assert variables["input"]["name"] == "Netflix"
+
+    @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
+    def test_no_stream_creates_with_custom_name_and_inactive(self, mock_get_client):
+        """No stream + custom name + is_active=False creates stream correctly."""
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = [
+            _make_merchant(stream=None),
+            _make_update_response(
+                name="Netflix Premium",
+                frequency="bimonthly",
+                amount=-22.99,
+                base_date="2024-02-01",
+                is_active=False,
+            ),
+        ]
+        mock_get_client.return_value = mock_client
+
+        result = update_recurring_transaction(
+            merchant_id="merch_1",
+            name="Netflix Premium",
+            frequency="bimonthly",
+            base_date="2024-02-01",
+            amount=-22.99,
+            is_active=False,
+        )
+        parsed = json.loads(result)
+
+        assert parsed["success"] is True
+        assert parsed["merchant"]["name"] == "Netflix Premium"
+        assert parsed["recurring_stream"]["is_active"] is False
+
+        # Verify custom name and is_active override
+        mutation_call = mock_client.gql_call.call_args_list[1]
+        variables = mutation_call.kwargs["variables"]
+        assert variables["input"]["name"] == "Netflix Premium"
+        assert variables["input"]["recurrence"]["isActive"] is False
 
     @patch("monarch_mcp_server.tools.recurring.get_monarch_client")
     def test_api_errors_returned(self, mock_get_client):

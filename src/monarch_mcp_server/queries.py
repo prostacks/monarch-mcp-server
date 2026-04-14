@@ -184,6 +184,56 @@ query Web_GetUpcomingRecurringTransactionItems(
 }
 """
 
+# All recurring streams query -- returns ALL streams regardless of date window.
+# Unlike recurringTransactionItems (date-windowed), this catches streams that
+# have no upcoming items (e.g., Lending Club loan). From HAR entry 67.
+GET_RECURRING_STREAMS_QUERY = """
+query Common_GetAllRecurringTransactionItems(
+    $filters: RecurringTransactionFilter,
+    $includeLiabilities: Boolean,
+    $includePending: Boolean
+) {
+    recurringTransactionStreams(
+        filters: $filters,
+        includeLiabilities: $includeLiabilities,
+        includePending: $includePending
+    ) {
+        id
+        frequency
+        amount
+        baseDate
+        isActive
+        isApproximate
+        name
+        logoUrl
+        reviewStatus
+        recurringType
+        merchant {
+            id
+            name
+            logoUrl
+            __typename
+        }
+        account {
+            id
+            displayName
+            __typename
+        }
+        category {
+            id
+            name
+            __typename
+        }
+        nextForecastedTransaction {
+            date
+            amount
+            __typename
+        }
+        __typename
+    }
+}
+"""
+
 # =============================================================================
 # Merchant queries & mutations (recurring management)
 # =============================================================================

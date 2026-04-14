@@ -8,6 +8,7 @@ from monarch_mcp_server.server import mcp, run_async, get_monarch_client
 from monarch_mcp_server.queries import (
     GET_ACCOUNTS_WITH_PAYMENT_FIELDS_QUERY,
     GET_RECURRING_TRANSACTIONS_ENRICHED_QUERY,
+    GET_RECURRING_STREAMS_QUERY,
     UPDATE_ACCOUNT_WITH_PAYMENT_FIELDS_MUTATION,
 )
 
@@ -119,9 +120,7 @@ def get_accounts() -> str:
                         if acct_id in due_day_map:
                             if "payment_details" not in account_info:
                                 account_info["payment_details"] = {}
-                            account_info["payment_details"]["due_day"] = due_day_map[
-                                acct_id
-                            ]
+                            account_info["payment_details"].update(due_day_map[acct_id])
                 except Exception as e:
                     logger.warning(f"Failed to enrich accounts with due days: {e}")
 
@@ -133,6 +132,11 @@ def get_accounts() -> str:
             Extracts the day-of-month from stream.baseDate (the authoritative
             billing/due date configured on the recurring stream). Falls back to
             item.date when baseDate is not available.
+
+            Uses a two-phase approach:
+            1. Date-windowed recurringTransactionItems (catches most accounts)
+            2. All recurringTransactionStreams as fallback (catches accounts
+               like Lending Club that have a stream but no items in any window)
             """
             from datetime import datetime, timedelta
 
@@ -141,6 +145,7 @@ def get_accounts() -> str:
             end_dt = now + timedelta(days=60)
             end = end_dt.strftime("%Y-%m-28")
 
+            # Phase 1: Date-windowed items query
             try:
                 query = gql(GET_RECURRING_TRANSACTIONS_ENRICHED_QUERY)
                 result = await client.gql_call(
@@ -161,9 +166,9 @@ def get_accounts() -> str:
                     logger.warning(
                         f"Failed to fetch recurring transactions for due days: {e}"
                     )
-                    return {}
+                    result = {"recurringTransactionItems": []}
 
-            # Build account_id -> due_day lookup
+            # Build account_id -> recurring info lookup from items
             due_day_map = {}
             for item in result.get("recurringTransactionItems", []):
                 account = item.get("account") or {}
@@ -174,14 +179,59 @@ def get_accounts() -> str:
                     continue
 
                 stream = item.get("stream") or {}
+                merchant = stream.get("merchant") or {}
                 date_str = stream.get("baseDate") or item.get("date")
                 if not date_str:
                     continue
                 try:
                     day = int(date_str.split("-")[2])
-                    due_day_map[acct_id] = day
+                    info = {"due_day": day}
+                    if merchant.get("id"):
+                        info["recurring_merchant_id"] = merchant["id"]
+                    if stream.get("id"):
+                        info["recurring_stream_id"] = stream["id"]
+                    due_day_map[acct_id] = info
                 except (IndexError, ValueError):
                     continue
+
+            # Phase 2: Streams fallback for accounts still missing due_day
+            remaining = account_ids_needing_due_day - set(due_day_map.keys())
+            if remaining:
+                try:
+                    streams_query = gql(GET_RECURRING_STREAMS_QUERY)
+                    streams_result = await client.gql_call(
+                        operation="Common_GetAllRecurringTransactionItems",
+                        graphql_query=streams_query,
+                        variables={
+                            "filters": {},
+                            "includeLiabilities": True,
+                            "includePending": True,
+                        },
+                    )
+                    for stream in streams_result.get("recurringTransactionStreams", []):
+                        account = stream.get("account") or {}
+                        acct_id = account.get("id")
+                        if not acct_id or acct_id not in remaining:
+                            continue
+                        if acct_id in due_day_map:
+                            continue
+
+                        date_str = stream.get("baseDate")
+                        if not date_str:
+                            continue
+                        try:
+                            day = int(date_str.split("-")[2])
+                            merchant = stream.get("merchant") or {}
+                            info = {"due_day": day}
+                            if merchant.get("id"):
+                                info["recurring_merchant_id"] = merchant["id"]
+                            if stream.get("id"):
+                                info["recurring_stream_id"] = stream["id"]
+                            due_day_map[acct_id] = info
+                        except (IndexError, ValueError):
+                            continue
+                except Exception as e:
+                    logger.warning(f"Failed to fetch recurring streams fallback: {e}")
 
             return due_day_map
 

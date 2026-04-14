@@ -8,6 +8,7 @@ from typing import Optional
 from monarch_mcp_server.server import mcp, run_async, get_monarch_client
 from monarch_mcp_server.queries import (
     GET_RECURRING_TRANSACTIONS_ENRICHED_QUERY,
+    GET_RECURRING_STREAMS_QUERY,
     GET_MERCHANT_DETAILS_QUERY,
     UPDATE_MERCHANT_MUTATION,
 )
@@ -151,6 +152,101 @@ def get_recurring_transactions(
 
 
 @mcp.tool()
+def get_recurring_streams(
+    include_liabilities: bool = True,
+    include_pending: bool = True,
+) -> str:
+    """
+    Get ALL recurring transaction streams from Monarch Money.
+
+    Unlike get_recurring_transactions (which returns date-windowed items),
+    this returns every recurring stream regardless of whether it has upcoming
+    items. This is essential for finding streams that exist but have no
+    scheduled items in any date range (e.g., some loan payments).
+
+    Each stream includes its merchant, account, category, and the next
+    forecasted transaction date/amount.
+
+    Args:
+        include_liabilities: Include liability account streams (default: True)
+        include_pending: Include pending/unconfirmed streams (default: True)
+
+    Returns:
+        List of all recurring streams with merchant, account, category,
+        and next forecasted transaction details.
+    """
+    try:
+        from gql import gql
+
+        async def _get_streams():
+            client = await get_monarch_client()
+            query = gql(GET_RECURRING_STREAMS_QUERY)
+            return await client.gql_call(
+                operation="Common_GetAllRecurringTransactionItems",
+                graphql_query=query,
+                variables={
+                    "filters": {},
+                    "includeLiabilities": include_liabilities,
+                    "includePending": include_pending,
+                },
+            )
+
+        result = run_async(_get_streams())
+
+        # Format streams
+        streams_list = []
+        for stream in result.get("recurringTransactionStreams", []):
+            merchant = stream.get("merchant") or {}
+            account = stream.get("account") or {}
+            category = stream.get("category") or {}
+            next_txn = stream.get("nextForecastedTransaction") or {}
+
+            stream_info = {
+                "id": stream.get("id"),
+                "name": stream.get("name"),
+                "frequency": stream.get("frequency"),
+                "amount": stream.get("amount"),
+                "base_date": stream.get("baseDate"),
+                "is_active": stream.get("isActive"),
+                "is_approximate": stream.get("isApproximate", False),
+                "logo_url": stream.get("logoUrl"),
+                "review_status": stream.get("reviewStatus"),
+                "recurring_type": stream.get("recurringType"),
+                "merchant": {
+                    "id": merchant.get("id"),
+                    "name": merchant.get("name"),
+                    "logo_url": merchant.get("logoUrl"),
+                }
+                if merchant.get("id")
+                else None,
+                "account": {
+                    "id": account.get("id"),
+                    "name": account.get("displayName"),
+                }
+                if account.get("id")
+                else None,
+                "category": {
+                    "id": category.get("id"),
+                    "name": category.get("name"),
+                }
+                if category.get("id")
+                else None,
+                "next_forecasted_transaction": {
+                    "date": next_txn.get("date"),
+                    "amount": next_txn.get("amount"),
+                }
+                if next_txn.get("date")
+                else None,
+            }
+            streams_list.append(stream_info)
+
+        return json.dumps(streams_list, indent=2, default=str)
+    except Exception as e:
+        logger.error(f"Failed to get recurring streams: {e}")
+        return f"Error getting recurring streams: {str(e)}"
+
+
+@mcp.tool()
 def get_merchant_details(
     merchant_id: str,
 ) -> str:
@@ -287,15 +383,47 @@ def update_recurring_transaction(
 
             stream = merchant.get("recurringTransactionStream")
             if not stream:
-                return {
-                    "success": False,
-                    "message": (
-                        f"Merchant '{merchant.get('name')}' has no recurring "
-                        f"transaction stream. Recurring streams are created "
-                        f"automatically by Monarch when it detects recurring "
-                        f"patterns, or can be set up in the Monarch web app."
-                    ),
+                # No existing stream — create one if required fields provided
+                missing = []
+                if frequency is None:
+                    missing.append("frequency")
+                if base_date is None:
+                    missing.append("base_date")
+                if amount is None:
+                    missing.append("amount")
+                if missing:
+                    return {
+                        "success": False,
+                        "message": (
+                            f"Merchant '{merchant.get('name')}' has no recurring "
+                            f"transaction stream. To create one, provide: "
+                            f"{', '.join(missing)}."
+                        ),
+                    }
+
+                # Create new stream with user-provided values
+                merged_name = name if name is not None else merchant.get("name")
+                merged_recurrence = {
+                    "isRecurring": True,
+                    "frequency": frequency,
+                    "baseDate": base_date,
+                    "amount": amount,
+                    "isActive": is_active if is_active is not None else True,
                 }
+
+                mutation = gql(UPDATE_MERCHANT_MUTATION)
+                result = await client.gql_call(
+                    operation="Common_UpdateMerchant",
+                    graphql_query=mutation,
+                    variables={
+                        "input": {
+                            "merchantId": merchant_id,
+                            "name": merged_name,
+                            "recurrence": merged_recurrence,
+                        }
+                    },
+                )
+                return result
 
             # Step 2: Merge user-provided fields with current values
             merged_name = name if name is not None else merchant.get("name")

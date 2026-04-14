@@ -7,8 +7,8 @@
 See `REFACTOR_PLAN.md` for the detailed execution plan.
 
 ## Summary
-- **Total Tools:** ~30
-- **Total Tests:** 147 (all passing)
+- **Total Tools:** ~31 (added get_recurring_streams in B2)
+- **Total Tests:** 160 (all passing)
 - **Deployment:** Railway (streamable-http), connected to Claude.ai as custom connector
 
 ---
@@ -77,26 +77,26 @@ Custom GraphQL query adds minimumPayment, apr, interestRate, limit fields for cr
 - A6 [x]: Extract duplicate HTML to admin.py templates
 - A7 [x]: Split server.py into modular files (queries.py, remote.py, tools/)
 
-### Phase B: Feature Fixes (see REFACTOR_PLAN.md)
+### Phase B: Feature Fixes (see REFACTOR_PLAN.md) -- COMPLETE
 3 fixes from gap analysis of a real Claude conversation failure:
-- B1: Add recurring_merchant_id/recurring_stream_id to get_accounts payment_details
-- B2: Add get_recurring_streams tool (stream-level query, fixes Lending Club gap)
-- B3: Enable creating recurring streams on merchants + _get_due_days fallback
+- B1 [x]: Add recurring_merchant_id/recurring_stream_id to get_accounts payment_details
+- B2 [x]: Add get_recurring_streams tool (stream-level query, fixes Lending Club gap)
+- B3 [x]: Enable creating recurring streams on merchants + _fetch_due_days streams fallback
 
 ---
 
 ## Test Files
 | File | Tests | Description |
 |------|-------|-------------|
-| test_accounts.py | 19 | Enriched fields, payment details, due_day enrichment |
+| test_accounts.py | 24 | Enriched fields, payment details, due_day enrichment, streams fallback |
 | test_transactions.py | 33 | Recurring transactions, update_transaction, search, review |
 | test_account_management.py | 19 | Create/update/delete account |
-| test_recurring_management.py | 17 | get_merchant_details, update/disable recurring |
+| test_recurring_management.py | 25 | get_merchant_details, get_recurring_streams, update/disable/create recurring |
 | test_admin.py | 21 | Admin auth, status, reauth flows |
 | test_categories.py | 6 | Category and category group tools |
 | test_rules.py | 12 | Transaction rule CRUD |
 | test_tags.py | 9 | Tag tools |
-| **Total** | **147** | **All passing** |
+| **Total** | **160** | **All passing** |
 
 ## Commit History (Recent)
 | Commit | Description |
