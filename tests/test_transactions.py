@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from monarch_mcp_server.tools.transactions import (
+    get_transactions,
     get_transactions_needing_review,
     set_transaction_category,
     update_transaction_notes,
@@ -15,6 +16,69 @@ from monarch_mcp_server.tools.transactions import (
     update_transaction,
 )
 from monarch_mcp_server.tools.recurring import get_recurring_transactions
+
+
+class TestGetTransactions:
+    """Tests for get_transactions tool."""
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    def test_get_transactions_includes_merchant_id(self, mock_get_client):
+        """Test that merchant_id is included in response."""
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {
+                "results": [
+                    {
+                        "id": "txn_1",
+                        "date": "2024-01-15",
+                        "amount": -50.00,
+                        "description": "Amazon purchase",
+                        "merchant": {"id": "merch_1", "name": "Amazon"},
+                        "category": {"id": "cat_1", "name": "Shopping"},
+                        "account": {"displayName": "Checking"},
+                        "isPending": False,
+                    }
+                ]
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        result = get_transactions()
+
+        transactions = json.loads(result)
+        assert len(transactions) == 1
+        txn = transactions[0]
+        assert txn["merchant"] == "Amazon"
+        assert txn["merchant_id"] == "merch_1"
+
+    @patch("monarch_mcp_server.tools.transactions.get_monarch_client")
+    def test_get_transactions_null_merchant(self, mock_get_client):
+        """Test that merchant_id is None when merchant is null."""
+        mock_client = AsyncMock()
+        mock_client.get_transactions.return_value = {
+            "allTransactions": {
+                "results": [
+                    {
+                        "id": "txn_1",
+                        "date": "2024-01-15",
+                        "amount": -50.00,
+                        "description": "Transfer",
+                        "merchant": None,
+                        "category": {"id": "cat_1", "name": "Transfer"},
+                        "account": {"displayName": "Checking"},
+                        "isPending": False,
+                    }
+                ]
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        result = get_transactions()
+
+        transactions = json.loads(result)
+        txn = transactions[0]
+        assert txn["merchant"] is None
+        assert txn["merchant_id"] is None
 
 
 class TestGetTransactionsNeedingReview:
@@ -129,7 +193,7 @@ class TestGetTransactionsNeedingReview:
                         "id": "txn_1",
                         "date": "2024-01-15",
                         "amount": -50.00,
-                        "merchant": {"name": "Amazon"},
+                        "merchant": {"id": "merch_1", "name": "Amazon"},
                         "plaidName": "AMAZON.COM*1234",
                         "category": {"id": "cat_1", "name": "Shopping"},
                         "account": {"id": "acc_1", "displayName": "Checking"},
@@ -151,6 +215,7 @@ class TestGetTransactionsNeedingReview:
         txn = transactions[0]
         assert txn["id"] == "txn_1"
         assert txn["merchant"] == "Amazon"
+        assert txn["merchant_id"] == "merch_1"
         assert txn["original_name"] == "AMAZON.COM*1234"
         assert txn["category"] == "Shopping"
         assert txn["category_id"] == "cat_1"
@@ -478,7 +543,7 @@ class TestSearchTransactions:
                         "id": "txn_1",
                         "date": "2024-01-15",
                         "amount": -50.00,
-                        "merchant": {"name": "Amazon"},
+                        "merchant": {"id": "merch_1", "name": "Amazon"},
                         "plaidName": "AMAZON.COM*1234",
                         "category": {"id": "cat_1", "name": "Shopping"},
                         "account": {"id": "acc_1", "displayName": "Checking"},
@@ -500,6 +565,8 @@ class TestSearchTransactions:
 
         transactions = json.loads(result)
         txn = transactions[0]
+        assert txn["merchant"] == "Amazon"
+        assert txn["merchant_id"] == "merch_1"
         assert txn["has_attachments"] is True
         assert txn["is_split"] is False
         assert txn["is_recurring"] is False

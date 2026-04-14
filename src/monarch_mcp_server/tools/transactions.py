@@ -60,6 +60,9 @@ def get_transactions(
                 "merchant": txn.get("merchant", {}).get("name")
                 if txn.get("merchant")
                 else None,
+                "merchant_id": txn.get("merchant", {}).get("id")
+                if txn.get("merchant")
+                else None,
                 "is_pending": txn.get("isPending", False),
             }
             transaction_list.append(transaction_info)
@@ -444,6 +447,9 @@ def search_transactions(
                 "merchant": txn.get("merchant", {}).get("name")
                 if txn.get("merchant")
                 else None,
+                "merchant_id": txn.get("merchant", {}).get("id")
+                if txn.get("merchant")
+                else None,
                 "original_name": txn.get("plaidName") or txn.get("originalName"),
                 "category": txn.get("category", {}).get("name")
                 if txn.get("category")
@@ -610,6 +616,9 @@ def get_transactions_needing_review(
                 "date": txn.get("date"),
                 "amount": txn.get("amount"),
                 "merchant": txn.get("merchant", {}).get("name")
+                if txn.get("merchant")
+                else None,
+                "merchant_id": txn.get("merchant", {}).get("id")
                 if txn.get("merchant")
                 else None,
                 "original_name": txn.get("plaidName") or txn.get("originalName"),
