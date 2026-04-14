@@ -184,36 +184,42 @@ query Web_GetUpcomingRecurringTransactionItems(
 }
 """
 
-# All recurring streams query -- returns ALL streams regardless of date window.
-# Unlike recurringTransactionItems (date-windowed), this catches streams that
-# have no upcoming items (e.g., Lending Club loan). From HAR entry 67.
+# All recurring streams query — uses the items endpoint with a wide date range
+# and deduplicates by stream ID to produce a "stream-level" view.
+#
+# NOTE: The `recurringTransactionStreams` top-level field was removed from the
+# Monarch API sometime between the original HAR capture (March 2026) and April
+# 2026. This query achieves the same result via the still-working items endpoint.
+# Streams with no items in any date range (e.g., some loan payments) will NOT
+# appear here — those require merchant-level lookup via GET_MERCHANT_DETAILS_QUERY.
 GET_RECURRING_STREAMS_QUERY = """
-query Common_GetAllRecurringTransactionItems(
-    $filters: RecurringTransactionFilter,
-    $includeLiabilities: Boolean,
-    $includePending: Boolean
+query Web_GetUpcomingRecurringTransactionItems(
+    $startDate: Date!, $endDate: Date!, $filters: RecurringTransactionFilter
 ) {
-    recurringTransactionStreams(
-        filters: $filters,
-        includeLiabilities: $includeLiabilities,
-        includePending: $includePending
+    recurringTransactionItems(
+        startDate: $startDate, endDate: $endDate, filters: $filters
     ) {
-        id
-        frequency
-        amount
-        baseDate
-        isActive
-        isApproximate
-        name
-        logoUrl
-        reviewStatus
-        recurringType
-        merchant {
+        stream {
             id
+            frequency
+            amount
+            baseDate
+            isActive
+            isApproximate
             name
             logoUrl
+            reviewStatus
+            recurringType
+            merchant {
+                id
+                name
+                logoUrl
+                __typename
+            }
             __typename
         }
+        date
+        amount
         account {
             id
             displayName
@@ -222,11 +228,6 @@ query Common_GetAllRecurringTransactionItems(
         category {
             id
             name
-            __typename
-        }
-        nextForecastedTransaction {
-            date
-            amount
             __typename
         }
         __typename

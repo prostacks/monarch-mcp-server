@@ -8,7 +8,7 @@ See `REFACTOR_PLAN.md` for the detailed execution plan.
 
 ## Summary
 - **Total Tools:** ~31 (added get_recurring_streams in B2)
-- **Total Tests:** 160 (all passing)
+- **Total Tests:** 162 (all passing)
 - **Deployment:** Railway (streamable-http), connected to Claude.ai as custom connector
 
 ---
@@ -83,24 +83,32 @@ Custom GraphQL query adds minimumPayment, apr, interestRate, limit fields for cr
 - B2 [x]: Add get_recurring_streams tool (stream-level query, fixes Lending Club gap)
 - B3 [x]: Enable creating recurring streams on merchants + _fetch_due_days streams fallback
 
+### Issue #3: Fix get_recurring_streams GraphQL error -- COMPLETE
+Monarch removed the `recurringTransactionStreams` top-level GraphQL field from their API (confirmed April 2026).
+- **Workaround:** Rewrote `get_recurring_streams` to use `recurringTransactionItems` with a wide date range (2020-2030), deduplicating by stream ID to reconstruct a stream-level view.
+- **Also fixed:** `_fetch_due_days` Phase 2 fallback in `get_accounts` now uses merchant-level stream lookup instead of the dead streams query.
+- **Files changed:** `queries.py`, `tools/recurring.py`, `tools/accounts.py`, `tests/test_recurring_management.py`, `tests/test_accounts.py`
+- **Tests:** 162 passing (+2 net new)
+
 ---
 
 ## Test Files
 | File | Tests | Description |
 |------|-------|-------------|
-| test_accounts.py | 24 | Enriched fields, payment details, due_day enrichment, streams fallback |
+| test_accounts.py | 25 | Enriched fields, payment details, due_day enrichment, merchant-level fallback |
 | test_transactions.py | 33 | Recurring transactions, update_transaction, search, review |
 | test_account_management.py | 19 | Create/update/delete account |
-| test_recurring_management.py | 25 | get_merchant_details, get_recurring_streams, update/disable/create recurring |
+| test_recurring_management.py | 26 | get_merchant_details, get_recurring_streams (items-based), update/disable/create recurring |
 | test_admin.py | 21 | Admin auth, status, reauth flows |
 | test_categories.py | 6 | Category and category group tools |
 | test_rules.py | 12 | Transaction rule CRUD |
 | test_tags.py | 9 | Tag tools |
-| **Total** | **160** | **All passing** |
+| **Total** | **162** | **All passing** |
 
 ## Commit History (Recent)
 | Commit | Description |
 |--------|-------------|
+| (pending) | Fix #3: get_recurring_streams rewritten for items-based workaround |
 | 853efeb | Due date write tools + enriched stream fields (latest, on origin main) |
 | 66de23c | Due date read-side: enriched recurring + due_day in get_accounts |
 | 1dff744 | Enriched get_accounts with payment fields |

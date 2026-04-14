@@ -701,44 +701,69 @@ class TestGetAccountsDueDay:
 
 
 # ---------------------------------------------------------------------------
-# Streams fallback for due_day (B3 Part 2)
+# Merchant-level fallback for due_day (Phase 2)
 # ---------------------------------------------------------------------------
 
 
-def _make_stream_response(
-    account_id,
-    base_date,
-    merchant_id="merch_s1",
-    stream_id=None,
-    frequency="monthly",
-    amount=-100.0,
-):
-    """Build a mock recurring stream for the streams fallback query."""
+def _make_merchant_response(merchant_id, name, stream=None):
+    """Build a mock merchant response from Common_GetEditMerchant."""
     return {
-        "id": stream_id or f"stream_{account_id}",
-        "name": "Stream Merchant",
+        "merchant": {
+            "id": merchant_id,
+            "name": name,
+            "logoUrl": None,
+            "transactionCount": 10,
+            "ruleCount": 0,
+            "canBeDeleted": False,
+            "hasActiveRecurringStreams": stream is not None,
+            "recurringTransactionStream": stream,
+            "__typename": "Merchant",
+        }
+    }
+
+
+def _make_merchant_stream(stream_id, base_date, frequency="monthly", amount=-100.0):
+    """Build a recurring stream on a merchant."""
+    return {
+        "id": stream_id,
         "frequency": frequency,
         "amount": amount,
         "baseDate": base_date,
         "isActive": True,
-        "isApproximate": False,
-        "logoUrl": None,
-        "reviewStatus": "approved",
-        "recurringType": "expense",
-        "merchant": {"id": merchant_id, "name": "Stream Merchant", "logoUrl": None},
-        "account": {"id": account_id, "displayName": "Test Account"},
-        "category": {"id": "cat_1", "name": "Bills"},
-        "nextForecastedTransaction": None,
+        "__typename": "RecurringTransactionStream",
     }
 
 
-def _mock_gql_call_with_streams(accounts, recurring_items, streams):
-    """Create a side_effect that returns accounts, then items, then streams.
+def _make_txn_result(transactions):
+    """Build a mock get_transactions response."""
+    return {
+        "allTransactions": {
+            "totalCount": len(transactions),
+            "results": transactions,
+        }
+    }
 
-    The three gql_call invocations are dispatched by operation name:
+
+def _make_txn(merchant_id, merchant_name, amount=-100.0, date="2026-03-15"):
+    """Build a single mock transaction."""
+    return {
+        "id": f"txn_{merchant_id}",
+        "amount": amount,
+        "date": date,
+        "merchant": {"id": merchant_id, "name": merchant_name, "transactionsCount": 5},
+        "isRecurring": False,
+    }
+
+
+def _mock_gql_call_with_merchant_fallback(
+    accounts, recurring_items, merchant_responses
+):
+    """Create a side_effect for the merchant-level fallback approach.
+
+    gql_call invocations are dispatched by operation name:
     - GetAccountsWithPaymentFields -> accounts
     - Web_GetUpcomingRecurringTransactionItems -> recurring items
-    - Common_GetAllRecurringTransactionItems -> streams
+    - Common_GetEditMerchant -> merchant_responses (dict keyed by merchant_id)
     """
 
     async def _side_effect(*args, **kwargs):
@@ -747,32 +772,40 @@ def _mock_gql_call_with_streams(accounts, recurring_items, streams):
             return {"accounts": accounts}
         elif operation == "Web_GetUpcomingRecurringTransactionItems":
             return {"recurringTransactionItems": recurring_items}
-        elif operation == "Common_GetAllRecurringTransactionItems":
-            return {"recurringTransactionStreams": streams}
+        elif operation == "Common_GetEditMerchant":
+            merchant_id = kwargs.get("variables", {}).get("merchantId")
+            if merchant_id and merchant_id in merchant_responses:
+                return merchant_responses[merchant_id]
+            return {"merchant": None}
         return {}
 
     return _side_effect
 
 
-class TestGetAccountsDueDayStreamsFallback:
-    """Tests for the Phase 2 streams fallback in _fetch_due_days."""
+class TestGetAccountsDueDayMerchantFallback:
+    """Tests for the Phase 2 merchant-level fallback in _fetch_due_days."""
 
     @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
-    def test_streams_fallback_fills_missing_due_day(self, mock_get_client):
-        """Loan with no recurring items but a stream gets due_day from streams fallback."""
+    def test_merchant_fallback_fills_missing_due_day(self, mock_get_client):
+        """Loan with no recurring items but merchant has stream gets due_day."""
         loan = _make_loan()
-        # No recurring items for this account
         recurring_items = []
-        # But there IS a stream
-        streams = [
-            _make_stream_response(
-                "acc_loan", "2026-04-02", merchant_id="merch_lc", amount=-520.0
-            )
-        ]
 
         mock_client = AsyncMock()
-        mock_client.gql_call.side_effect = _mock_gql_call_with_streams(
-            [loan], recurring_items, streams
+        mock_client.gql_call.side_effect = _mock_gql_call_with_merchant_fallback(
+            [loan],
+            recurring_items,
+            {
+                "merch_lc": _make_merchant_response(
+                    "merch_lc",
+                    "LendingClub Loan",
+                    stream=_make_merchant_stream("stream_lc", "2026-02-15"),
+                )
+            },
+        )
+        # Mock get_transactions for the loan account
+        mock_client.get_transactions.return_value = _make_txn_result(
+            [_make_txn("merch_lc", "LendingClub Loan", amount=-585.83)]
         )
         mock_get_client.return_value = mock_client
 
@@ -781,23 +814,19 @@ class TestGetAccountsDueDayStreamsFallback:
 
         assert len(accounts) == 1
         pd = accounts[0]["payment_details"]
-        assert pd["due_day"] == 2
+        assert pd["due_day"] == 15
         assert pd["recurring_merchant_id"] == "merch_lc"
-        assert pd["recurring_stream_id"] == "stream_acc_loan"
+        assert pd["recurring_stream_id"] == "stream_lc"
 
     @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
-    def test_streams_fallback_not_called_when_all_accounts_resolved(
-        self, mock_get_client
-    ):
-        """When all credit/loan accounts have due_day from items, streams query is skipped."""
+    def test_merchant_fallback_not_called_when_all_resolved(self, mock_get_client):
+        """When all accounts have due_day from items, merchant fallback is skipped."""
         cc = _make_credit_card()
         recurring_items = [_make_recurring_item("acc_cc", "2026-05-15")]
 
         mock_client = AsyncMock()
-        mock_client.gql_call.side_effect = _mock_gql_call_with_streams(
-            [cc],
-            recurring_items,
-            [],  # streams shouldn't be called
+        mock_client.gql_call.side_effect = _mock_gql_call_with_merchant_fallback(
+            [cc], recurring_items, {}
         )
         mock_get_client.return_value = mock_client
 
@@ -805,25 +834,31 @@ class TestGetAccountsDueDayStreamsFallback:
         accounts = json.loads(result)
 
         assert accounts[0]["payment_details"]["due_day"] == 15
-
-        # Verify only 2 gql_call invocations (accounts + items), NOT 3
+        # Only 2 gql_call invocations (accounts + items), no get_transactions call
         assert mock_client.gql_call.call_count == 2
+        mock_client.get_transactions.assert_not_called()
 
     @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
-    def test_mixed_items_and_streams_fallback(self, mock_get_client):
-        """Credit card resolved by items, loan resolved by streams fallback."""
+    def test_mixed_items_and_merchant_fallback(self, mock_get_client):
+        """Credit card resolved by items, loan resolved by merchant fallback."""
         cc = _make_credit_card()
         loan = _make_loan()
-        # Items only have the credit card
         recurring_items = [_make_recurring_item("acc_cc", "2026-05-15")]
-        # Streams have the loan
-        streams = [
-            _make_stream_response("acc_loan", "2026-04-02", merchant_id="merch_lc")
-        ]
 
         mock_client = AsyncMock()
-        mock_client.gql_call.side_effect = _mock_gql_call_with_streams(
-            [cc, loan], recurring_items, streams
+        mock_client.gql_call.side_effect = _mock_gql_call_with_merchant_fallback(
+            [cc, loan],
+            recurring_items,
+            {
+                "merch_lc": _make_merchant_response(
+                    "merch_lc",
+                    "LendingClub Loan",
+                    stream=_make_merchant_stream("stream_lc", "2026-04-02"),
+                )
+            },
+        )
+        mock_client.get_transactions.return_value = _make_txn_result(
+            [_make_txn("merch_lc", "LendingClub Loan")]
         )
         mock_get_client.return_value = mock_client
 
@@ -834,57 +869,89 @@ class TestGetAccountsDueDayStreamsFallback:
         # Credit card: from items
         assert accounts[0]["payment_details"]["due_day"] == 15
         assert accounts[0]["payment_details"]["recurring_merchant_id"] == "merch_1"
-        # Loan: from streams fallback
+        # Loan: from merchant fallback
         assert accounts[1]["payment_details"]["due_day"] == 2
         assert accounts[1]["payment_details"]["recurring_merchant_id"] == "merch_lc"
 
     @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
-    def test_streams_fallback_graceful_on_failure(self, mock_get_client):
-        """If streams fallback fails, accounts still returned without due_day."""
+    def test_merchant_fallback_skips_merchants_without_stream(self, mock_get_client):
+        """Merchant with no recurring stream is skipped, tries next merchant."""
         loan = _make_loan()
-        recurring_items = []  # No items for the loan
-
-        call_count = {"n": 0}
-
-        async def _failing_streams(*args, **kwargs):
-            call_count["n"] += 1
-            operation = kwargs.get("operation", "")
-            if operation == "GetAccountsWithPaymentFields":
-                return {"accounts": [loan]}
-            elif operation == "Web_GetUpcomingRecurringTransactionItems":
-                return {"recurringTransactionItems": []}
-            elif operation == "Common_GetAllRecurringTransactionItems":
-                raise Exception("Streams API error")
-            return {}
+        recurring_items = []
 
         mock_client = AsyncMock()
-        mock_client.gql_call.side_effect = _failing_streams
+        mock_client.gql_call.side_effect = _mock_gql_call_with_merchant_fallback(
+            [loan],
+            recurring_items,
+            {
+                "merch_no_stream": _make_merchant_response(
+                    "merch_no_stream", "Payment", stream=None
+                ),
+                "merch_with_stream": _make_merchant_response(
+                    "merch_with_stream",
+                    "LendingClub Loan",
+                    stream=_make_merchant_stream("stream_lc", "2026-02-15"),
+                ),
+            },
+        )
+        mock_client.get_transactions.return_value = _make_txn_result(
+            [
+                _make_txn("merch_no_stream", "Payment"),
+                _make_txn("merch_with_stream", "LendingClub Loan"),
+            ]
+        )
         mock_get_client.return_value = mock_client
 
         result = get_accounts()
         accounts = json.loads(result)
 
-        # Account still returned with payment_details, just no due_day
+        assert len(accounts) == 1
+        pd = accounts[0]["payment_details"]
+        assert pd["due_day"] == 15
+        assert pd["recurring_merchant_id"] == "merch_with_stream"
+
+    @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
+    def test_merchant_fallback_graceful_on_failure(self, mock_get_client):
+        """If merchant fallback fails entirely, accounts still returned."""
+        loan = _make_loan()
+        recurring_items = []
+
+        mock_client = AsyncMock()
+        mock_client.gql_call.side_effect = _mock_gql_call_with_merchant_fallback(
+            [loan], recurring_items, {}
+        )
+        mock_client.get_transactions.side_effect = Exception("API error")
+        mock_get_client.return_value = mock_client
+
+        result = get_accounts()
+        accounts = json.loads(result)
+
         assert len(accounts) == 1
         pd = accounts[0]["payment_details"]
         assert pd["minimum_payment"] == 520.0
         assert "due_day" not in pd
 
     @patch("monarch_mcp_server.tools.accounts.get_monarch_client")
-    def test_streams_fallback_ignores_non_credit_loan_accounts(self, mock_get_client):
-        """Streams for depository accounts are ignored even in fallback."""
+    def test_merchant_fallback_ignores_non_credit_loan_accounts(self, mock_get_client):
+        """Depository accounts never trigger the merchant fallback."""
         chk = _make_checking()
         loan = _make_loan()
         recurring_items = []
-        # Stream exists for both checking and loan
-        streams = [
-            _make_stream_response("acc_chk", "2026-04-10"),
-            _make_stream_response("acc_loan", "2026-04-02"),
-        ]
 
         mock_client = AsyncMock()
-        mock_client.gql_call.side_effect = _mock_gql_call_with_streams(
-            [chk, loan], recurring_items, streams
+        mock_client.gql_call.side_effect = _mock_gql_call_with_merchant_fallback(
+            [chk, loan],
+            recurring_items,
+            {
+                "merch_lc": _make_merchant_response(
+                    "merch_lc",
+                    "LendingClub Loan",
+                    stream=_make_merchant_stream("stream_lc", "2026-04-02"),
+                )
+            },
+        )
+        mock_client.get_transactions.return_value = _make_txn_result(
+            [_make_txn("merch_lc", "LendingClub Loan")]
         )
         mock_get_client.return_value = mock_client
 
@@ -892,7 +959,7 @@ class TestGetAccountsDueDayStreamsFallback:
         accounts = json.loads(result)
 
         assert len(accounts) == 2
-        # Checking: no payment_details (depository accounts excluded from enrichment)
+        # Checking: no payment_details
         assert "payment_details" not in accounts[0]
-        # Loan: gets due_day from streams fallback
+        # Loan: gets due_day from merchant fallback
         assert accounts[1]["payment_details"]["due_day"] == 2

@@ -66,7 +66,7 @@ src/monarch_mcp_server/
 
 ### Tests
 - `tests/conftest.py` -- Shared mock setup for monarchmoney module
-- `tests/test_*.py` -- 8 test files, 147+ tests
+- `tests/test_*.py` -- 8 test files, 162 tests
 - Test `@patch` paths use `monarch_mcp_server.tools.MODULE.get_monarch_client`
 
 ## Development Patterns
@@ -162,7 +162,8 @@ class TestMyTool:
 - **Account payment writes:** Same fields writable via `UpdateAccountMutationInput`
 - **Recurring management:** `Common_GetEditMerchant`, `Common_UpdateMerchant` (with `recurrence` input)
 - **Transaction rules:** `GetTransactionRules`, `CreateTransactionRuleV2`, `UpdateTransactionRuleV2`, `DeleteTransactionRule`
-- **Recurring streams:** `recurringTransactionStreams` query (all streams, no date window)
+- **Recurring streams (items-based):** `recurringTransactionItems` with wide date range (2020-2030), deduplicated by stream ID. The old `recurringTransactionStreams` top-level field was **removed from the Monarch API** in April 2026.
+- **Merchant-level stream lookup:** `Common_GetEditMerchant` returns `recurringTransactionStream` on individual merchants — used as fallback for debt accounts.
 - **Enriched recurring items:** Extended `Web_GetUpcomingRecurringTransactionItems` with `baseDate`, `reviewStatus`, `recurringType`, `isLate`, `isCompleted`, `markedPaidAt`
 
 ### API Quirks
@@ -171,6 +172,7 @@ class TestMyTool:
 - Browser-like headers required for raw aiohttp calls (Cloudflare)
 - Railway datacenter IPs trigger Monarch bot detection on login (use MONARCH_TOKEN env var)
 - `dayOfTheMonth` field exists on RecurringTransactionStream but is always null; use `baseDate` instead
+- **`recurringTransactionStreams` top-level field REMOVED** from Monarch API (April 2026). Use `recurringTransactionItems` with wide date range + deduplication, or merchant-level `Common_GetEditMerchant` for individual stream lookup.
 
 ## Testing
 ```bash

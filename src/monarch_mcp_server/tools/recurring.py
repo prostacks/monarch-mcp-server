@@ -153,27 +153,25 @@ def get_recurring_transactions(
 
 @mcp.tool()
 def get_recurring_streams(
-    include_liabilities: bool = True,
-    include_pending: bool = True,
+    include_inactive: bool = True,
 ) -> str:
     """
     Get ALL recurring transaction streams from Monarch Money.
 
-    Unlike get_recurring_transactions (which returns date-windowed items),
-    this returns every recurring stream regardless of whether it has upcoming
-    items. This is essential for finding streams that exist but have no
-    scheduled items in any date range (e.g., some loan payments).
+    Unlike get_recurring_transactions (which returns individual date-windowed
+    items), this returns a deduplicated list of every unique recurring stream.
+    Uses a wide date range to capture as many streams as possible, then
+    deduplicates by stream ID.
 
-    Each stream includes its merchant, account, category, and the next
-    forecasted transaction date/amount.
+    Note: Streams with no scheduled items in any date range (e.g., some loan
+    payments) may not appear here. For those, use get_merchant_details with
+    the merchant ID from account transactions.
 
     Args:
-        include_liabilities: Include liability account streams (default: True)
-        include_pending: Include pending/unconfirmed streams (default: True)
+        include_inactive: Include inactive/paused streams (default: True)
 
     Returns:
-        List of all recurring streams with merchant, account, category,
-        and next forecasted transaction details.
+        List of all recurring streams with merchant, account, category details.
     """
     try:
         from gql import gql
@@ -182,24 +180,41 @@ def get_recurring_streams(
             client = await get_monarch_client()
             query = gql(GET_RECURRING_STREAMS_QUERY)
             return await client.gql_call(
-                operation="Common_GetAllRecurringTransactionItems",
+                operation="Web_GetUpcomingRecurringTransactionItems",
                 graphql_query=query,
                 variables={
+                    "startDate": "2020-01-01",
+                    "endDate": "2030-12-31",
                     "filters": {},
-                    "includeLiabilities": include_liabilities,
-                    "includePending": include_pending,
                 },
             )
 
         result = run_async(_get_streams())
 
+        # Deduplicate items by stream ID to produce stream-level view
+        streams_by_id = {}
+        accounts_by_stream = {}
+        categories_by_stream = {}
+        for item in result.get("recurringTransactionItems", []):
+            stream = item.get("stream") or {}
+            stream_id = stream.get("id")
+            if not stream_id:
+                continue
+            if stream_id not in streams_by_id:
+                streams_by_id[stream_id] = stream
+                accounts_by_stream[stream_id] = item.get("account") or {}
+                categories_by_stream[stream_id] = item.get("category") or {}
+
         # Format streams
         streams_list = []
-        for stream in result.get("recurringTransactionStreams", []):
+        for stream_id, stream in streams_by_id.items():
+            # Filter inactive if requested
+            if not include_inactive and not stream.get("isActive", True):
+                continue
+
             merchant = stream.get("merchant") or {}
-            account = stream.get("account") or {}
-            category = stream.get("category") or {}
-            next_txn = stream.get("nextForecastedTransaction") or {}
+            account = accounts_by_stream.get(stream_id, {})
+            category = categories_by_stream.get(stream_id, {})
 
             stream_info = {
                 "id": stream.get("id"),
@@ -230,12 +245,6 @@ def get_recurring_streams(
                     "name": category.get("name"),
                 }
                 if category.get("id")
-                else None,
-                "next_forecasted_transaction": {
-                    "date": next_txn.get("date"),
-                    "amount": next_txn.get("amount"),
-                }
-                if next_txn.get("date")
                 else None,
             }
             streams_list.append(stream_info)
